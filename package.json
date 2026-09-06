@@ -1,0 +1,47 @@
+{
+  "name": "md-code-links",
+  "displayName": "Markdown Code Links",
+  "description": "Jump from Markdown to C/C++ source: clickable path:line links plus clangd-powered go-to-definition for identifiers inside code blocks and inline code.",
+  "version": "0.0.2",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "markdown",
+    "link",
+    "jump",
+    "clangd",
+    "definition"
+  ],
+  "activationEvents": [
+    "onLanguage:markdown"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Markdown Code Links",
+      "properties": {
+        "mdCodeLinks.enableFunctionJump": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable clangd-powered function-name jump (F12 / Ctrl+Click) inside Markdown code blocks and inline code."
+        },
+        "mdCodeLinks.prewarmIndex": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start clangd in the background when a workspace with compile_commands.json is opened, so the symbol index is ready sooner."
+        },
+        "mdCodeLinks.clangdPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to the clangd binary. Empty = auto-detect (/usr/lib/llvm-*/bin/clangd, PATH)."
+        }
+      }
+    }
+  }
+}
