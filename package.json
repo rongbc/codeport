@@ -270,6 +270,7 @@
     "watch": "node scripts/build.mjs --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"test/**/*.test.ts\"",
+    "pretest": "node scripts/build.mjs",
     "check": "npm run typecheck && npm run build && npm test",
     "package": "npx --yes @vscode/vsce package",
     "vscode:prepublish": "npm run build"

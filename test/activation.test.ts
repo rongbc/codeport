@@ -16,7 +16,6 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { installVscodeStub, awaitStatusTask } from './support/vscode-stub.ts';
@@ -40,13 +39,9 @@ let handle: ReturnType<typeof installVscodeStub>;
 let extension: { activate(context: unknown): unknown; deactivate(): Promise<void> };
 
 before(async () => {
-  // Build the real bundle (and copy the tree-sitter WASM assets) exactly the way
-  // shipping does, so the test validates the build pipeline too.
-  execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'build.mjs')], {
-    cwd: ROOT,
-    stdio: 'pipe',
-  });
-  assert.ok(fs.existsSync(BUNDLE), 'the build must produce dist/extension.js');
+  // `npm test` runs the `pretest` build first. Asserting here keeps a bare
+  // `node --test` run from failing with a confusing module-not-found error.
+  assert.ok(fs.existsSync(BUNDLE), 'run `npm run build` first (npm test does it via pretest)');
   assert.ok(fs.existsSync(path.join(ROOT, 'dist', 'wasm', 'tree-sitter-cpp.wasm')));
 
   workspace = fs.mkdtempSync(path.join(requireCjs('node:os').tmpdir(), 'codeport-e2e-'));

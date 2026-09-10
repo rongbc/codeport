@@ -55,6 +55,8 @@ export class SymbolIndex {
   readonly workspaceRoot: string;
   readonly dbPath: string;
   private closed = false;
+  /** True once a full sync/rebuild completed in this session. */
+  private synced = false;
 
   private constructor(
     store: IndexStore,
@@ -143,14 +145,29 @@ export class SymbolIndex {
   }
 
   /** Re-walk the workspace, re-indexing only changed files. */
-  sync(report?: ProgressReporter): Promise<IndexRunStats> {
-    return this.indexer.fullIndex(report);
+  /**
+   * Whether this index has completed a full sync. A freshly opened database that
+   * already holds rows still reports `false`: the on-disk contents may be stale,
+   * so a cheap hash-comparison pass is still owed before results are trusted.
+   */
+  get hasSynced(): boolean {
+    return this.synced;
+  }
+
+  /** Re-walk the workspace, re-indexing only changed files. */
+  async sync(report?: ProgressReporter): Promise<IndexRunStats> {
+    const stats = await this.indexer.fullIndex(report);
+    this.synced = true;
+    return stats;
   }
 
   /** Drop every row and rebuild from scratch. */
   async rebuild(report?: ProgressReporter): Promise<IndexRunStats> {
     if (!this.closed) this.store.clear();
-    return this.indexer.fullIndex(report);
+    this.synced = false;
+    const stats = await this.indexer.fullIndex(report);
+    this.synced = true;
+    return stats;
   }
 
   /** Incrementally (re)index specific files, e.g. from a file watcher. */

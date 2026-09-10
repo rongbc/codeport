@@ -55,7 +55,7 @@ The guiding principle:
 
 A dependency rule holds throughout: **nothing below `core/` imports `vscode`.** The Markdown parser, the
 index, the LSP transport, the adapters and the resolver pipeline are all plain Node modules, which is why
-75 tests can cover them (and the whole extension) without a GUI.
+80 tests can cover them (and the whole extension) without a GUI.
 
 ## Directory layout
 
@@ -242,6 +242,13 @@ need quoting everywhere.
 - Parsing and `node:sqlite` are synchronous, so the loop yields to the event loop every 25 files; that is
   what keeps the extension host responsive on a large workspace.
 - `schema_version` mismatch → drop and recreate. The index is a cache.
+- **Workspace-scoped, not project-scoped.** `IndexService` builds an index for a workspace folder
+  without consulting project detection, because the index needs no build system: `compile_commands.json`
+  is a requirement of *clangd*, not of CodePort. Only the language server is gated on a detected project
+  (`compile_commands.json` / `.clangd`). `startInBackground()` is idempotent per root, so the resolver
+  can call it on demand (`index.prewarm = false`) without queueing duplicate scans. Gating the index on
+  project detection was a real defect: without either marker the index was never populated and every
+  lookup failed — `test/degradation.test.ts` guards against it.
 
 ### Why tree-sitter *and* clangd
 
@@ -305,6 +312,7 @@ rust-analyzer alone — `SymbolIndex.create` simply reports fewer supported lang
 | `test/lsp-client.test.ts` | real JSON-RPC framing over a mock server: handshake, multi-byte UTF-8, server→client requests, spawn failure, pool reuse |
 | `test/activation.test.ts` | **the real esbuild bundle** on a stubbed VS Code API and a temporary C project: provider/command registration, index build, definition, hover provenance, references through real clangd, clean shutdown |
 | `test/architecture.test.ts` | the enforced invariants: nothing below `core/` imports `vscode`, no TypeScript parameter properties, adapter contracts, policy ids match the settings enum, and contributed/registered/read settings stay consistent |
+| `test/degradation.test.ts` | **no build system and no language server**: the index is still built from the workspace alone, definition/hover/link work, a weak mention that escalates to a dead server still resolves from the index, and Find All References reports nothing rather than guessing |
 
 `test/activation.test.ts` intentionally uses the built bundle rather than the sources, so a broken build
 or a missing WASM asset fails the suite.

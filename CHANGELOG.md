@@ -50,6 +50,11 @@ index. Engineering design in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ### Fixed
 
+- The index is no longer gated on project detection. A workspace with neither `compile_commands.json` nor
+  `.clangd` previously never received an index, so every lookup failed — even though the index needs no
+  build system at all. The index is workspace-scoped; only the language server requires a detected
+  project. `IndexService.startInBackground()` is now idempotent per root, so an on-demand index
+  (`codeport.index.prewarm = false`) is populated on first use instead of staying empty.
 - LSP framing is byte-accurate, so multi-byte UTF-8 in indexed source cannot desynchronise the stream.
 - Graceful `shutdown`/`exit` on dispose (previously every shutdown waited out the kill grace period).
 - Only named aggregates and enums with a body become symbols; `struct Node *next;` no longer emits a

@@ -88,7 +88,7 @@ code --install-extension codeport-0.1.0.vsix
 
 ### 2. 打开一个 CodePort 能理解的项目
 
-用 **文件 > 打开文件夹…** 打开同时装着源码与 Markdown 的目录。C/C++ 项目需要有 `compile_commands.json`：CodePort 先查工作区根目录，再从 Markdown 文件向上逐级查找，因此 CMake 工程里的 `docs/` 子目录也能正常工作。`clangd` 会自动探测，索引随后在后台构建。
+用 **文件 > 打开文件夹…** 打开同时装着源码与 Markdown 的目录。索引会立刻在后台开始构建 —— 它不需要任何构建配置。若要 C/C++ 的**语义**能力，请确保项目有 `compile_commands.json`（或 `.clangd`）且已安装 `clangd`：CodePort 先查工作区根目录，再从 Markdown 文件向上逐级查找，因此 CMake 工程里的 `docs/` 子目录也能正常工作。
 
 ### 3. 从 Markdown 跳转
 
@@ -206,11 +206,27 @@ nxsched_add_readytorun(tcb);
 ## 环境要求
 
 - VS Code **≥ 1.90**（索引依赖 Node 内置的 `node:sqlite`，自 Node 22.5 起提供）。在更老的宿主上 CodePort 仍可用，只是退化为「仅 Language Server」—— 它会自动探测到并在日志中说明。
-- C/C++ 需要 `clangd` 二进制（自动探测顺序：`codeport.clangd.path` → `/usr/lib/llvm-*/bin/clangd`（版本从新到旧）→ `/usr/local/bin/clangd` → `/usr/bin/clangd` → `PATH`）。
-- C/C++ 项目需要有 `compile_commands.json`。查找顺序是**先工作区根目录，再从 Markdown 文件向上逐级**。
+- C/C++ 的**语义**能力需要 `clangd` 二进制（自动探测顺序：`codeport.clangd.path` → `/usr/lib/llvm-*/bin/clangd`（版本从新到旧）→ `/usr/local/bin/clangd` → `/usr/bin/clangd` → `PATH`），以及 `compile_commands.json`（或 `.clangd`）。查找顺序是**先工作区根目录，再从 Markdown 文件向上逐级**。
 - 必须打开的是一个文件夹 —— 单独打开一个文件时没有可供索引与解析的项目。
 
 **无原生模块、无需 `npm rebuild`**：索引使用 WASM 版 tree-sitter 与内置 SQLite。
+
+### 没有 clangd / 没有编译数据库时还能用什么
+
+**导航**既不依赖 clangd，也不依赖 `compile_commands.json`。索引按工作区直接扫描源码建立，完全不需要
+构建配置。因此没装 clangd 的机器上、或没有编译数据库的项目里：
+
+| 能力 | 无 clangd / 无 `compile_commands.json` |
+|---|---|
+| 跳转定义 | ✅ 由索引作答 |
+| Hover（签名 + 来源依据） | ✅ 签名来自索引 |
+| 插入源码链接 | ✅ |
+| 路径 / 行号链接 | ✅ |
+| 查找所有引用 | ❌ 需要在真实定义位置上有 Language Server |
+| 重载、模板、宏、条件编译 | ❌ 索引只有结构，没有语义 |
+
+**弱证据** —— 裸写 `` `nx_start` ``，既无调用括号、围栏也没写语言 —— 正是会升级去问 Language Server
+的情况。当服务不可用时，CodePort 会保留索引候选而不是直接失败，并在日志中说明。
 
 <br/>
 
@@ -219,7 +235,8 @@ nxsched_add_readytorun(tcb);
 - 只扫描**围栏代码块**与**行内代码**；正文永远不会被当作符号，文件路径与 URL 仍归代码链接 Provider 负责。
 - 本地索引止步于符号与（可选的）调用点。调用图、继承图、模板实例化图属于 Language Server 的职责。
 - 目前只有 C/C++ 同时具备内置的项目探测与索引提取器；其余适配器只是等待实现的接口。
-- C/C++ 的效果取决于 `compile_commands.json`：没有它，或者 clangd 仍在构建自身索引（大型项目可能 30–60 秒）时，查询可能失败或定位到错误的位置。
+- C/C++ 的**语义**准确性取决于 `compile_commands.json`：没有它索引照样能导航，但重载解析、模板、宏、条件编译需要 clangd；而当 clangd 仍在构建自身索引时（大型项目 30–60 秒），**弱证据**的查询可能只能退回索引的结构性答案。
+- `查找所有引用` 与编译器级签名的 Hover 需要 Language Server；没有它时 CodePort 会报告「未找到引用」，而不是拿自己的候选冒充引用。
 - Markdown 不会渲染围栏代码块内部的链接，因此**插入源码链接**只适用于行内代码。
 
 <br/>
@@ -256,7 +273,7 @@ CodePort 是更名并重新架构后的继任者。首次激活时它会询问�
 
 ## 排障
 
-- **提示 "no definition found"** —— 打开 **CodePort: Show Log**，解析管线会记录跑了哪些引擎、各自返回了什么。常见原因：没有 `compile_commands.json`，或 clangd 仍在构建自身索引（大型项目首次查询可能需要 30–60 秒）。
+- **提示 "no definition found"** —— 打开 **CodePort: Show Log**，解析管线会记录跑了哪些引擎、各自返回了什么。常见原因：索引仍在构建（首次运行，或关闭了 `codeport.index.prewarm`）、该名称确实没被索引；或者对于**升级到 clangd 的弱证据**查询，缺少 `compile_commands.json`、clangd 仍在构建自身索引（大型项目 30–60 秒）。
 - **跳转到了错误的位置** —— 悬停该符号，来源依据行会写明引擎与依据。如果是索引答错了，把 `codeport.policy` 改成 `lsp-first`，或把 `codeport.policy.indexAcceptConfidence` 设为 `1`，强制每次都向 Language Server 确认。
 - **索引被禁用** —— 日志会说明原因（缺少 `node:sqlite`，或缺少 tree-sitter 资源）。此时导航仍可通过 Language Server 工作。
 - **大重构后结果陈旧** —— 执行 **CodePort: Rebuild Index**。
@@ -286,15 +303,15 @@ src/project/     ProjectDetector + CppProjectDetector
 src/lsp/         通用 stdio JSON-RPC 客户端与客户端池
 src/providers/   Definition / Reference / Hover / DocumentLink Provider
 src/commands/    Insert Source Link 与命令面板入口
-test/            75 个单元 + 集成测试（最后一个跑真实打包产物）
+test/            80 个单元 + 集成测试（最后一个跑真实打包产物）
 docs/            ARCHITECTURE.md / ARCHITECTURE.zh-CN.md
 ```
 
-脚本：`npm run build`（esbuild → `dist/`）· `npm run watch` · `npm run typecheck` · `npm test`（75 个测试）· `npm run check`（typecheck + build + test）· `npm run package`（`@vscode/vsce` → `codeport-0.1.0.vsix`）。
+脚本：`npm run build`（esbuild → `dist/`）· `npm run watch` · `npm run typecheck` · `npm test`（80 个测试）· `npm run check`（typecheck + build + test）· `npm run package`（`@vscode/vsce` → `codeport-0.1.0.vsix`）。
 
 按 **F5** 可以启动 Extension Development Host。
 
-`npm run package` 通过 `vscode:prepublish` 先构建 `dist/`，再用 `@vscode/vsce` 打包。`.vsix` 生成在仓库根目录，已被 git 忽略。如希望类型检查与 75 个测试为本次打包把关，先跑 `npm run check`。
+`npm run package` 通过 `vscode:prepublish` 先构建 `dist/`，再用 `@vscode/vsce` 打包。`.vsix` 生成在仓库根目录，已被 git 忽略。如希望类型检查与 80 个测试为本次打包把关，先跑 `npm run check`。
 
 测试套件包含一个端到端用例：把**真实打包产物**运行在桩化的 VS Code API 与真实临时 C 项目之上，从而在不启动图形界面的情况下覆盖完整链路（Markdown → 解析 → 项目探测 → 索引 → 解析管线 → Provider）。各测试文件覆盖的内容见 [docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md#测试)。
 

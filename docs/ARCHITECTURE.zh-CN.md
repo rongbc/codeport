@@ -58,7 +58,7 @@
 的候选按置信度合并。图中保留英文标识符，以便与源码目录一一对应。
 
 全局遵守一条依赖规则：**`core/` 之下的任何模块都不 import `vscode`。** Markdown 解析器、索引、LSP
-传输层、适配器与解析管线全部是纯 Node 模块 —— 这正是 75 个测试能够在没有图形界面的情况下覆盖它们
+传输层、适配器与解析管线全部是纯 Node 模块 —— 这正是 80 个测试能够在没有图形界面的情况下覆盖它们
 （以及整个扩展）的原因。这条规则由 `test/architecture.test.ts` 强制检查，而不是靠约定。
 
 ## 目录结构
@@ -241,6 +241,7 @@ meta(key, value)   -- schema_version
 - tree-sitter 解析与 `node:sqlite` 都是同步的，所以循环每 25 个文件让出一次事件循环 —— 这是大型工作区
   下扩展宿主仍然保持响应的关键。
 - `schema_version` 不匹配 → 直接删表重建。索引只是缓存。
+- **按工作区划分，而不是按项目划分。** `IndexService` 为工作区目录建立索引，完全不查项目探测，因为索引不需要任何构建系统：`compile_commands.json` 是 *clangd* 的要求，不是 CodePort 的。只有 Language Server 才以探测到的项目（`compile_commands.json` / `.clangd`）为前提。`startInBackground()` 对同一根目录幂等，因此解析器可以按需调用（`index.prewarm = false`）而不会重复排队扫描。把索引挂在项目探测上曾是一个真实缺陷：两个标记文件都不存在时索引永远不会被填充，所有查询都会失败 —— 由 `test/degradation.test.ts` 守住。
 
 ### 为什么同时要 tree-sitter 和 clangd
 
@@ -300,5 +301,6 @@ include。它无法判断 `foo(x)` 究竟指向谁 —— 那是重载解析、�
 | `test/lsp-client.test.ts` | 与 mock server 之间的真实 JSON-RPC 分帧：握手、多字节 UTF-8、服务端→客户端请求、spawn 失败、连接池复用 |
 | `test/activation.test.ts` | **真实 esbuild 产物** + 桩化 VS Code API + 临时 C 项目：Provider/命令注册、索引构建、跳转定义、Hover 来源依据、经真实 clangd 的引用查找、干净关闭 |
 | `test/architecture.test.ts` | 架构不变量：`core/` 之下不 import `vscode`、无 TS 参数属性、适配器契约、策略枚举一致、命令与配置项的贡献／注册／读取三方一致 |
+| `test/degradation.test.ts` | **既无构建系统、也无 Language Server**：索引仍仅凭工作区建立；跳转／Hover／插入链接可用；升级到「已死的」服务端的弱证据查询仍能从索引作答；查找所有引用会如实报告「未找到」而不是猜 |
 
 `test/activation.test.ts` 刻意使用打包产物而非源码，因此**构建失败或 WASM 资源缺失都会让测试失败**。

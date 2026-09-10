@@ -212,10 +212,13 @@ export class CodePort {
 
     const target = this.languages.describeTarget(reference.language, documentUri);
 
-    // Make sure the index exists so IndexResolver can participate on the first
-    // request rather than only from the second one onwards.
+    // Make sure the index exists *and* gets populated. Creating it is not enough:
+    // an unsynced index is empty, so the first request would find nothing. This
+    // also covers `index.prewarm = false`, where the build starts on first use
+    // instead of at activation. Both calls are idempotent.
     if (workspaceRoot && config.indexEnabled && config.policy !== 'lsp-only') {
       await this.indexes.ensureIndex(workspaceRoot);
+      void this.indexes.startInBackground(workspaceRoot);
     }
 
     const context: ResolveContext = {
@@ -282,13 +285,19 @@ export class CodePort {
 
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       const root = folder.uri.fsPath;
+
+      // The index is workspace-based: it needs no build system and no compiler.
+      // Gating it on project detection (a `compile_commands.json`/`.clangd`) would
+      // needlessly disable indexing in projects CodePort could still navigate.
+      if (config.indexEnabled) void this.indexes.startInBackground(root);
+
+      // A language server, by contrast, is useless without a build configuration.
       const projects = this.projects.projectsInWorkspace(root);
       if (projects.length === 0) continue;
 
       this.logger.info(
-        `prewarming ${root} (${projects.map((project) => `${project.adapterId}:${project.markers.join('+')}`).join(', ')})`
+        `project detected in ${root} (${projects.map((project) => `${project.adapterId}:${project.markers.join('+')}`).join(', ')})`
       );
-      if (config.indexEnabled) void this.indexes.startInBackground(root);
       if (config.policy !== 'index-only') void this.prewarmLanguageServers(root);
     }
   }

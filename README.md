@@ -88,7 +88,7 @@ To hack on it instead, open the repository in VS Code and press **F5** to launch
 
 ### 2. Open a project CodePort can understand
 
-Open the folder that holds your sources and your Markdown with **File > Open Folder…**. For C/C++ make sure the project has a `compile_commands.json`: CodePort looks in the workspace root first, then upwards from the Markdown file, so `docs/` inside a CMake tree works. `clangd` is auto-detected and the index starts building in the background.
+Open the folder that holds your sources and your Markdown with **File > Open Folder…**. The index starts building in the background straight away — it needs no build configuration. For C/C++ *semantic* features, make sure the project has a `compile_commands.json` (or a `.clangd`) and that `clangd` is installed: CodePort looks in the workspace root first, then upwards from the Markdown file, so `docs/` inside a CMake tree works.
 
 ### 3. Jump from Markdown
 
@@ -207,11 +207,25 @@ Adding a language means writing one `LanguageAdapter` and one `ProjectDetector` 
 ## Requirements
 
 - VS Code **≥ 1.90** (the index uses Node's built-in `node:sqlite`, available from Node 22.5). On an older host CodePort still works, language-server only — it detects this and says so in the log.
-- For C/C++: a `clangd` binary (auto-detected: `codeport.clangd.path`, `/usr/lib/llvm-*/bin/clangd` newest first, `/usr/local/bin/clangd`, `/usr/bin/clangd`, `PATH`).
-- A `compile_commands.json` for the C/C++ project. It is looked for in the workspace root first, then upwards from the Markdown file.
+- For C/C++ **semantic** features: a `clangd` binary (auto-detected: `codeport.clangd.path`, `/usr/lib/llvm-*/bin/clangd` newest first, `/usr/local/bin/clangd`, `/usr/bin/clangd`, `PATH`), plus a `compile_commands.json` (or a `.clangd` file). It is looked for in the workspace root first, then upwards from the Markdown file.
 - A folder must be open — in a single loose file there is no project to index or resolve against.
 
 No native modules, no `npm rebuild`: the index uses WASM tree-sitter and built-in SQLite.
+
+### What works without clangd or a build system
+
+Neither clangd nor `compile_commands.json` is required for **navigation**. The index is built per workspace straight from the sources — it needs no build configuration at all — so on a machine without clangd, or in a project without a compilation database:
+
+| Capability | Without clangd / `compile_commands.json` |
+|---|---|
+| Go to definition | ✅ answered by the index |
+| Hover (signature + provenance) | ✅ signature comes from the index |
+| Insert Source Link | ✅ |
+| Path / line links | ✅ |
+| Find All References | ❌ needs a server at a real definition position |
+| Overloads, templates, macros, conditional compilation | ❌ the index is structural, not semantic |
+
+A *weak* mention — a bare `` `nx_start` ``, with no call parentheses and no fence language — is exactly the case that escalates to the language server. When that server is unavailable, CodePort keeps the index candidate instead of failing, and says so in the log.
 
 <br/>
 
@@ -220,7 +234,8 @@ No native modules, no `npm rebuild`: the index uses WASM tree-sitter and built-i
 - Only **fenced code blocks** and **inline code** are scanned; prose is never treated as a symbol, and file mentions / URLs stay owned by the code-link provider.
 - The local index stops at symbols and (optional) call sites. Call graphs, inheritance graphs and template-instantiation graphs belong to the language server.
 - C/C++ is the only language with a built-in detector and index extractor today; the other adapters are interfaces waiting for an implementation.
-- C/C++ results are only as good as `compile_commands.json`. Without it — or while clangd is still building its own index, which can take 30–60 s on a large project — a lookup can fail or land in the wrong place.
+- C/C++ **semantic** accuracy is only as good as `compile_commands.json`. The index still navigates without it, but overload resolution, templates, macros and conditional compilation need clangd — and while clangd is building its own index (30–60 s on a large project) a *weak* mention can fall back to the index's structural answer.
+- `Find All References` and the compiler-grade hover signature require a language server; without one, CodePort reports no references rather than inventing them.
 - Markdown does not render links inside a fenced code block, so **Insert Source Link** applies to inline code only.
 
 <br/>
@@ -257,7 +272,7 @@ The migration never overwrites a `codeport.*` value you already set, and the old
 
 ## Troubleshooting
 
-- **"no definition found"** — Open **CodePort: Show Log**. The pipeline logs which engines ran and what each returned. Common causes: no `compile_commands.json`, or clangd still building its index (the first lookup in a large project can take 30–60 s).
+- **"no definition found"** — Open **CodePort: Show Log**. The pipeline logs which engines ran and what each returned. Common causes: the index is still building (first run, or `codeport.index.prewarm` disabled), the name genuinely is not indexed, or — for a *weak* mention that escalated to clangd — a missing `compile_commands.json` or clangd still building its own index (30–60 s on a large project).
 - **A jump went to the wrong place** — Hover the symbol: the provenance line names the engine and the evidence. If the index answered wrongly, set `codeport.policy` to `lsp-first`, or `codeport.policy.indexAcceptConfidence` to `1` to always confirm with the server.
 - **The index is disabled** — The log says why (`node:sqlite` missing, or tree-sitter assets absent). Navigation still works through language servers.
 - **Stale results after a big refactor** — Run **CodePort: Rebuild Index**.
@@ -287,15 +302,15 @@ src/project/     ProjectDetector + CppProjectDetector
 src/lsp/         generic stdio JSON-RPC client and client pool
 src/providers/   Definition / Reference / Hover / DocumentLink providers
 src/commands/    Insert Source Link + the command palette entries
-test/            75 unit + integration tests (the last one runs the built bundle)
+test/            80 unit + integration tests (the last one runs the built bundle)
 docs/            ARCHITECTURE.md / ARCHITECTURE.zh-CN.md
 ```
 
-Scripts: `npm run build` (esbuild → `dist/`) · `npm run watch` · `npm run typecheck` · `npm test` (75 tests) · `npm run check` (typecheck + build + test) · `npm run package` (`@vscode/vsce` → `codeport-0.1.0.vsix`).
+Scripts: `npm run build` (esbuild → `dist/`) · `npm run watch` · `npm run typecheck` · `npm test` (80 tests) · `npm run check` (typecheck + build + test) · `npm run package` (`@vscode/vsce` → `codeport-0.1.0.vsix`).
 
 Press **F5** to launch an Extension Development Host.
 
-`npm run package` builds `dist/` through `vscode:prepublish` and then packages it with `@vscode/vsce`. The `.vsix` is written to the repository root and is git-ignored. Run `npm run check` first if you want the type-check and the 75 tests to gate the build.
+`npm run package` builds `dist/` through `vscode:prepublish` and then packages it with `@vscode/vsce`. The `.vsix` is written to the repository root and is git-ignored. Run `npm run check` first if you want the type-check and the 80 tests to gate the build.
 
 The suite includes an end-to-end test that runs the **real bundle** against a stubbed VS Code API and a real temporary C project, so the whole chain (Markdown → parser → project detection → index → resolver → provider) is covered without launching a GUI. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#testing) for what each test file covers.
 

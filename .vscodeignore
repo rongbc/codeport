@@ -11,6 +11,11 @@ tsconfig.json
 package-lock.json
 .gitignore
 
+# The local index is a per-workspace cache. `.gitignore` covers it for git, but
+# `vsce` packages according to *this* file, so it must be listed here too or a
+# stale index database ships inside the .vsix.
+.codeport/**
+
 **/*.vsix
 **/*.log
 **/*.ts

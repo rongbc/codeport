@@ -39,6 +39,8 @@ export class IndexService {
   private readonly pendingDelete = new Map<string, Set<string>>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly warned = new Set<string>();
+  /** Roots whose background sync has already been kicked off this session. */
+  private readonly syncStarted = new Set<string>();
 
   private readonly wasmDir: string;
   private readonly getConfig: () => CodePortConfig;
@@ -125,11 +127,14 @@ export class IndexService {
 
   /**
    * Create the index (if needed) and bring it up to date in the background.
-   * Returns immediately after the index object exists.
+   * Idempotent per root: repeated calls while a sync is pending or done are free,
+   * so the resolver can invoke it on demand without piling up scans.
    */
   async startInBackground(workspaceRoot: string): Promise<void> {
     const index = await this.ensureIndex(workspaceRoot);
     if (!index) return;
+    if (this.syncStarted.has(workspaceRoot)) return;
+    this.syncStarted.add(workspaceRoot);
 
     void vscode.window.setStatusBarMessage(
       '$(sync~spin) CodePort: indexing…',
@@ -260,6 +265,7 @@ export class IndexService {
     this.timers.clear();
     this.pendingIndex.clear();
     this.pendingDelete.clear();
+    this.syncStarted.clear();
     for (const [root, index] of this.indexes) {
       index.close();
       this.logger.trace(`index closed for ${root}`);
@@ -271,6 +277,7 @@ export class IndexService {
     this.disposed = true;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
+    this.syncStarted.clear();
     for (const list of this.watchers.values()) {
       for (const watcher of list) watcher.dispose();
     }

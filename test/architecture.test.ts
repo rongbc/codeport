@@ -124,6 +124,20 @@ test('every registered command is contributed in package.json', () => {
   assert.deepEqual(extra, [], `registered but not contributed: ${extra.join(', ')}`);
 });
 
+test('the local index caches are excluded from the package', () => {
+  // `.gitignore` and `.vscodeignore` are separate mechanisms: a directory ignored
+  // by git is still packaged unless `.vscodeignore` excludes it too. That mistake
+  // would ship a stale `.codeport/index.db` inside the .vsix.
+  const ignore = fs.readFileSync(fileURLToPath(new URL('../.vscodeignore', import.meta.url)), 'utf8');
+  const gitignore = fs.readFileSync(fileURLToPath(new URL('../.gitignore', import.meta.url)), 'utf8');
+  for (const [name, text] of [
+    ['.vscodeignore', ignore],
+    ['.gitignore', gitignore],
+  ] as const) {
+    assert.match(text, /^\.codeport\/\*\*|^\.codeport\/$/m, `${name} must ignore the .codeport index cache`);
+  }
+});
+
 test('every setting the code reads is contributed in package.json', () => {
   const packageJson = JSON.parse(
     fs.readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')
