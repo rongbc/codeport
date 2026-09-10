@@ -1,8 +1,17 @@
+# Sources, tooling and tests are not shipped. `dist/` is not excluded, so the
+# built bundle and its tree-sitter WASM assets are packaged as-is.
+src/**
+test/**
+scripts/**
+docs/**
 .vscode/**
 .vscode-test/**
-src/test/**
+node_modules/**
+tsconfig.json
+package-lock.json
 .gitignore
+
 **/*.vsix
 **/*.log
-**/node_modules/**
-out/**
+**/*.ts
+**/*.map

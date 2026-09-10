@@ -1,47 +1,273 @@
 {
-  "name": "md-code-links",
-  "displayName": "Markdown Code Links",
-  "description": "Jump from Markdown to C/C++ source: clickable path:line links plus clangd-powered go-to-definition for identifiers inside code blocks and inline code.",
-  "version": "0.0.2",
+  "name": "codeport",
+  "displayName": "CodePort \u2014 Navigate Markdown to Source Code",
+  "description": "Bring source-code navigation to Markdown. Resolve symbols in code blocks and inline code through a local CodePort index and your project's language servers (clangd first).",
+  "version": "0.1.0",
   "publisher": "local",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Programming Languages"
   ],
   "keywords": [
     "markdown",
-    "link",
     "jump",
+    "definition",
+    "link",
+    "symbol",
+    "index",
+    "tree-sitter",
     "clangd",
-    "definition"
+    "lsp",
+    "c",
+    "cpp"
+  ],
+  "extensionKind": [
+    "workspace"
   ],
   "activationEvents": [
-    "onLanguage:markdown"
+    "onLanguage:markdown",
+    "onStartupFinished"
   ],
-  "main": "./src/extension.js",
+  "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "CodePort starts language servers and writes a local index under .codeport/. In an untrusted workspace the index is not built."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "CodePort needs a real file system to index sources and locate compile_commands.json."
+    }
+  },
   "contributes": {
+    "commands": [
+      {
+        "command": "codeport.goToDefinition",
+        "title": "CodePort: Go to Definition",
+        "category": "CodePort"
+      },
+      {
+        "command": "codeport.peekDefinition",
+        "title": "CodePort: Peek Definition",
+        "category": "CodePort"
+      },
+      {
+        "command": "codeport.findReferences",
+        "title": "CodePort: Find All References",
+        "category": "CodePort"
+      },
+      {
+        "command": "codeport.insertSourceLink",
+        "title": "CodePort: Insert Source Link",
+        "category": "CodePort"
+      },
+      {
+        "command": "codeport.rebuildIndex",
+        "title": "CodePort: Rebuild Index",
+        "category": "CodePort"
+      },
+      {
+        "command": "codeport.showIndexStats",
+        "title": "CodePort: Show Index Statistics",
+        "category": "CodePort"
+      },
+      {
+        "command": "codeport.showLog",
+        "title": "CodePort: Show Log",
+        "category": "CodePort"
+      },
+      {
+        "command": "codeport.migrateSettings",
+        "title": "CodePort: Migrate mdCodeLinks Settings",
+        "category": "CodePort"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "codeport.goToDefinition",
+          "when": "editorLangId == markdown",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codeport.peekDefinition",
+          "when": "editorLangId == markdown",
+          "group": "navigation@2"
+        },
+        {
+          "command": "codeport.findReferences",
+          "when": "editorLangId == markdown",
+          "group": "navigation@3"
+        },
+        {
+          "command": "codeport.insertSourceLink",
+          "when": "editorLangId == markdown",
+          "group": "navigation@4"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "codeport.migrateSettings",
+          "when": "config.codeport.enabled"
+        }
+      ]
+    },
     "configuration": {
-      "title": "Markdown Code Links",
+      "title": "CodePort",
       "properties": {
-        "mdCodeLinks.enableFunctionJump": {
+        "codeport.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable clangd-powered function-name jump (F12 / Ctrl+Click) inside Markdown code blocks and inline code."
+          "markdownDescription": "Master switch for CodePort.",
+          "scope": "window"
         },
-        "mdCodeLinks.prewarmIndex": {
+        "codeport.definition.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Start clangd in the background when a workspace with compile_commands.json is opened, so the symbol index is ready sooner."
+          "description": "Enable go-to-definition (F12 / Ctrl+Click) for symbols inside Markdown code blocks and inline code."
         },
-        "mdCodeLinks.clangdPath": {
+        "codeport.references.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Find All References for symbols inside Markdown code blocks and inline code."
+        },
+        "codeport.hover.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable hover information (symbol kind, signature, definition site) inside Markdown code blocks and inline code."
+        },
+        "codeport.codeLink.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Turn `path/to/file.c:42` inside inline code into a clickable link that opens the file at that line."
+        },
+        "codeport.codeLink.resolveRelativeToMarkdownFile": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also resolve path links relative to the directory of the Markdown file itself (in addition to absolute paths and workspace-root-relative paths)."
+        },
+        "codeport.policy": {
+          "type": "string",
+          "enum": [
+            "index-first",
+            "lsp-first",
+            "index-only",
+            "lsp-only"
+          ],
+          "default": "index-first",
+          "markdownDescription": "How CodePort combines its two engines.\n\n- `index-first`: consult the local index, accept it when confident, otherwise confirm with the language server.\n- `lsp-first`: ask the language server first, fall back to the index.\n- `index-only`: never start a language server.\n- `lsp-only`: never use the local index.",
+          "scope": "window"
+        },
+        "codeport.policy.indexAcceptConfidence": {
+          "type": "number",
+          "default": 0.85,
+          "minimum": 0,
+          "maximum": 1,
+          "markdownDescription": "Confidence a single index candidate must reach for `index-first` to skip the language server.",
+          "scope": "window"
+        },
+        "codeport.index.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Build and use the local CodePort index (`.codeport/index.db`, tree-sitter + SQLite). Requires a VS Code with Node 22.5+ (for `node:sqlite`); otherwise CodePort silently falls back to the language server only.",
+          "scope": "window"
+        },
+        "codeport.index.prewarm": {
+          "type": "boolean",
+          "default": true,
+          "description": "Build/sync the local index and start the project's language servers in the background when a supported project is opened."
+        },
+        "codeport.index.references": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Also index symbol references (call sites). Increases index size and build time; reference *queries* still come from the language server.",
+          "scope": "window"
+        },
+        "codeport.index.maxFileSize": {
+          "type": "number",
+          "default": 2097152,
+          "description": "Skip files larger than this many bytes when indexing."
+        },
+        "codeport.index.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/.git/**",
+            "**/.codeport/**",
+            "**/node_modules/**",
+            "**/build/**",
+            "**/out/**",
+            "**/dist/**",
+            "**/target/**",
+            "**/.cache/**"
+          ],
+          "markdownDescription": "Glob patterns excluded from indexing.",
+          "scope": "window"
+        },
+        "codeport.languages": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Map a Markdown code-fence language to an adapter id, e.g. `{ \"c\": \"clangd\", \"cpp\": \"clangd\" }`. Empty values use the built-in language detection.",
+          "scope": "window"
+        },
+        "codeport.clangd.path": {
           "type": "string",
           "default": "",
-          "description": "Optional absolute path to the clangd binary. Empty = auto-detect (/usr/lib/llvm-*/bin/clangd, PATH)."
+          "description": "Absolute path to the clangd binary. Empty = auto-detect (/usr/lib/llvm-*/bin/clangd, /usr/local/bin/clangd, /usr/bin/clangd, PATH).",
+          "scope": "window"
+        },
+        "codeport.clangd.arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra command-line arguments appended when launching clangd.",
+          "scope": "window"
+        },
+        "codeport.clangd.compileCommandsDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Directory containing `compile_commands.json`. Empty = auto-detect (workspace root, then upwards from the Markdown file).",
+          "scope": "window"
+        },
+        "codeport.trace": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "messages",
+          "description": "Log level for the CodePort output channel.",
+          "scope": "window",
+          "markdownDescription": "Log level for the CodePort output channel. `off` still reports warnings and errors."
         }
       }
     }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm run build && npm test",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/tree-sitter-wasm": "^0.3.1",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.6.0"
   }
 }

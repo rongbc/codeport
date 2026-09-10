@@ -1,133 +1,249 @@
-# Markdown Code Links
+# CodePort — Navigate Markdown to Source Code
 
-Jump from Markdown notes to C/C++ source code — as easily as inside `.c`/`.h` files. clangd only serves C/C++; this extension bridges the gap for Markdown.
+**English** · [简体中文](README.zh-CN.md)
+
+**CodePort brings source-code navigation to Markdown.** Put the cursor on a symbol written in your
+documentation and jump straight to its definition, peek it, find every reference, or turn the mention
+into a link — using your project's real language server, backed by a fast local index.
+
+```
+Markdown  ──►  CodePort  ──►  ┌ CodePort Index  (tree-sitter + SQLite, local, instant)
+   `nx_start()`               └ clangd / rust-analyzer / gopls / … (compiler-grade semantics)
+                                          │
+                                          ▼
+                                  Source definition
+```
+
+CodePort does not try to understand every programming language. It delegates that to language servers
+and to a local index, and treats both as interchangeable evidence.
+
+---
 
 ## Features
 
-### 1. Function-name jump (clangd-powered) ⭐
+### 1. Go to definition inside Markdown ⭐
 
-Inside **fenced code blocks** (```` ``` ````) and **inline code** (`` ` ``), put the cursor on an identifier and:
+Inside **fenced code blocks** and **inline code**, press **F12** or **Ctrl+Click** on an identifier:
 
-- Press **F12** or **Ctrl+Click** → jumps to the definition via clangd (`workspace/symbol`)
-- Multiple definitions (e.g. `static` functions with the same name across files) show a Peek list — identical to the `.c` experience
+````markdown
+Call `nx_start()` to initialise the scheduler.
 
 ```c
-// e.g. click start_worker below to jump to its definition
-start_worker();
-create_task("t1", 100, 2048, worker_main, NULL);
+nxsched_add_readytorun(tcb);
+```
+````
+
+Multiple definitions (for example `static` functions with the same name in different files) open the
+usual Peek list — identical to the experience inside a `.c` file.
+
+### 2. Find All References
+
+Finds every reference to a Markdown symbol. CodePort first resolves the mention to a real definition and
+then asks the language server for references *at that definition*, where a real source position exists.
+
+### 3. Hover with provenance
+
+Hovering a symbol shows its signature — and which engine answered, how confident it was, and why:
+
+```
+nx_start — nx · function
+
+void nx_start(void)
+
+a.c:7
+index · confidence 0.85 · exact name, language c, kind function, unique result
 ```
 
-> Requirement: the project root (workspace root) has a `compile_commands.json` — it must sit at the workspace root, no sub-directory search.
-> First use needs clangd's background index (~30–60 s for a typical project), afterwards lookups are instant. A status bar message shows progress/errors.
-
-### 2. Path / line links
+### 4. Path / line links
 
 ```
-`/home/user/project/src/main.c:42`  → absolute path, Ctrl+Click opens file and reveals line 42
-`src/main.c:42`                     → relative to the project root (workspace root)
+`/home/user/project/src/main.c:42`  → absolute path: opens the file at line 42
+`src/main.c:42`                     → resolved against the workspace root
 ```
 
-Resolution: **absolute path → relative to project root (workspace root)**. Paths relative to the `.md` file's directory are not resolved.
+Optionally also resolved relative to the Markdown file itself
+(`codeport.codeLink.resolveRelativeToMarkdownFile`).
+
+### 5. Insert source link (the other direction)
+
+Turns a mention into a Markdown link to its definition:
+
+````markdown
+`nx_start()`   →   [nx_start()](../sched/init/nx_start.c#L123)
+````
+
+Available from the editor context menu (**CodePort: Insert Source Link**). Inline code only — Markdown
+does not render links inside a fenced code block.
+
+---
+
+## Two engines, one answer
+
+| | CodePort Index | Language server |
+|---|---|---|
+| Speed | milliseconds, no server needed | depends on the server / its index |
+| Works offline | yes | needs the server |
+| C++ overloads, templates, macros, conditional compilation | no | yes |
+| Cost | tree-sitter parse + tiny SQLite database | full compiler-grade parse |
+
+They are complementary, not alternatives. `codeport.policy` decides how they are combined:
+
+| Policy | Behaviour |
+|---|---|
+| `index-first` *(default)* | Use the index when a single candidate is convincing (confidence ≥ `codeport.policy.indexAcceptConfidence`, default `0.85`); otherwise confirm with the language server and prefer its answer. |
+| `lsp-first` | Ask the language server first; fall back to the index. |
+| `index-only` | Never start a language server. |
+| `lsp-only` | Never use the local index. |
+
+A mention like `` `nx_start()` `` inside a ```` ```c ```` block reaches 0.85 and is served straight from
+the index. A bare `` `nx_start` `` reaches only 0.70, so CodePort asks clangd — the evidence is weaker,
+so it pays for certainty. Every decision is visible in the log and in the hover.
+
+---
+
+## Supported languages
+
+| Language | Project marker | Language server | Status |
+|---|---|---|---|
+| C / C++ | `compile_commands.json`, `.clangd` | clangd | ✅ implemented |
+| Rust | `Cargo.toml` | rust-analyzer | 🚧 adapter interface ready |
+| Go | `go.mod`, `go.work` | gopls | 🚧 adapter interface ready |
+| TypeScript | `tsconfig.json` | tsserver | 🚧 adapter interface ready |
+| Python | `pyproject.toml` | Pyright | 🚧 adapter interface ready |
+
+Adding a language means writing one `LanguageAdapter` and one `ProjectDetector` — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#adding-a-language). The core, the index, the resolver
+pipeline and the UI do not change.
+
+---
 
 ## Requirements
 
-- VS Code ≥ 1.75
-- A `clangd` binary on the system (auto-detected: `/usr/lib/llvm-*/bin/clangd`, `/usr/local/bin/clangd`, `/usr/bin/clangd`, or `PATH`)
-- A `compile_commands.json` **at the project root (workspace root)** for the function-name jump
+- VS Code **≥ 1.90** (the index uses Node's built-in `node:sqlite`, available from Node 22.5). On an
+  older host CodePort still works, language-server only — it detects this and says so in the log.
+- For C/C++: a `clangd` binary
+  (auto-detected: `codeport.clangd.path`, `/usr/lib/llvm-*/bin/clangd` newest first,
+  `/usr/local/bin/clangd`, `/usr/bin/clangd`, `PATH`).
+- A `compile_commands.json` for the C/C++ project. It is looked for in the workspace root first, then
+  upwards from the Markdown file — so `docs/` inside a CMake tree works.
+
+No native modules, no `npm rebuild`: the index uses WASM tree-sitter and built-in SQLite.
+
+---
 
 ## Installation
 
-Copy the project directory into the VS Code extensions folder (name must match `package.json` version):
+Copy the folder into the VS Code extensions directory, naming it
+`<publisher>.<name>-<version>`:
 
 ```sh
-cp -r ~/git/md-code-links ~/.vscode-server/extensions/md-code-links-0.0.2
+npm install && npm run build
+cp -r . ~/.vscode-server/extensions/local.codeport-0.1.0
 ```
 
-Then run **Developer: Reload Window** (`Ctrl+Shift+P`) or reconnect the Remote window.
+Then run **Developer: Reload Window** (`Ctrl+Shift+P`), or reconnect the Remote window.
+
+---
 
 ## Configuration
 
 | Setting | Default | Description |
 |---|---|---|
-| `mdCodeLinks.enableFunctionJump` | `true` | Enable clangd-powered function-name jump |
-| `mdCodeLinks.prewarmIndex` | `true` | Start clangd in the background when a workspace with `compile_commands.json` is opened |
-| `mdCodeLinks.clangdPath` | `""` | Absolute path to clangd; empty = auto-detect |
+| `codeport.enabled` | `true` | Master switch. |
+| `codeport.definition.enabled` | `true` | Go-to-definition in Markdown code. |
+| `codeport.references.enabled` | `true` | Find All References. |
+| `codeport.hover.enabled` | `true` | Hover with signature and provenance. |
+| `codeport.codeLink.enabled` | `true` | Clickable `path/file.c:42` links. |
+| `codeport.codeLink.resolveRelativeToMarkdownFile` | `false` | Also resolve path links relative to the Markdown file. |
+| `codeport.policy` | `index-first` | How the two engines are combined (see above). |
+| `codeport.policy.indexAcceptConfidence` | `0.85` | Confidence needed for `index-first` to skip the server. |
+| `codeport.index.enabled` | `true` | Build/use the local index. |
+| `codeport.index.prewarm` | `true` | Build the index and start language servers in the background on open. |
+| `codeport.index.references` | `false` | Also index call sites (bigger index, slower build). |
+| `codeport.index.maxFileSize` | `2097152` | Skip files larger than this (bytes). |
+| `codeport.index.exclude` | `**/.git/**`, `**/node_modules/**`, `**/build/**`, … | Glob patterns excluded from the index. |
+| `codeport.languages` | `{}` | Override the fence-language → adapter mapping. |
+| `codeport.clangd.path` | `""` | clangd binary; empty = auto-detect. |
+| `codeport.clangd.arguments` | `[]` | Extra clangd arguments. |
+| `codeport.clangd.compileCommandsDir` | `""` | Directory holding `compile_commands.json`; empty = auto-detect. |
+| `codeport.trace` | `messages` | Log level for the CodePort output channel (`off` still reports warnings and errors). |
 
-## Implementation notes
+## Commands
 
-- **Function-name jump**: a Markdown `DefinitionProvider` plus a minimal LSP-over-stdio client (zero npm dependencies). One persistent `clangd --compile-commands-dir=<ws> --background-index` process is started lazily; the identifier under the cursor is resolved with `workspace/symbol` (exact match first, fuzzy fallback, up to 10 candidates).
-- **Index warm-up**: clangd 15's background indexer only starts after the first file is opened (measured: no indexing after 5 min without `didOpen`; ~20 s to full index after `didOpen`). The extension sends `didOpen` for a seed file from `compile_commands.json` to wake the indexer.
-- **Path links**: a `DocumentLinkProvider`; line numbers use the `#L502` URI fragment.
-- **Scope**: only identifiers inside code blocks / inline code are handled (fence pairing + inline backtick parity); plain prose is never touched.
-
-## License
-
-MIT
+| Command | Description |
+|---|---|
+| `CodePort: Go to Definition` | Reveal the definition (also **F12**). |
+| `CodePort: Peek Definition` | Peek the definition. |
+| `CodePort: Find All References` | Reference search through the language server. |
+| `CodePort: Insert Source Link` | Rewrite inline code into a link to the definition. |
+| `CodePort: Rebuild Index` | Drop and rebuild `.codeport/index.db`. |
+| `CodePort: Show Index Statistics` | File/symbol/reference counts per workspace. |
+| `CodePort: Show Log` | Open the CodePort output channel. |
+| `CodePort: Migrate mdCodeLinks Settings` | Copy `mdCodeLinks.*` settings to `codeport.*`. |
 
 ---
 
-# Markdown Code Links（中文说明）
+## How the index works
 
-在 Markdown 笔记里像 `.c`/`.h` 中一样跳转源码。clangd 只管 C/C++，不处理 Markdown，本扩展补上这一环。
+- **Parsing**: tree-sitter (WASM) recovers *structure* — functions, methods, classes, structs, unions,
+  enums, enumerators, typedefs, aliases, variables, fields, namespaces, macros, includes.
+- **Storage**: `.codeport/index.db` (SQLite, WAL) with `files`, `symbols`, `symbol_references` and
+  `includes` tables. `.codeport/.gitignore` is created so the cache is never committed.
+- **Incremental**: on startup the workspace is re-scanned and only files whose content hash changed are
+  re-parsed; a `FileSystemWatcher` then applies create/change/delete events in 500 ms batches.
+- **No call graph.** The index deliberately stops at symbols and (optional) call sites. Call graphs,
+  inheritance graphs and template-instantiation graphs belong to the language server.
+- **Rebuildable**: the index is a cache. Delete `.codeport/` at any time; a schema change rebuilds it.
 
-## 功能特性
+---
 
-### 1. 函数名跳转（clangd 驱动）⭐ 核心功能
+## Migrating from `md-code-links`
 
-在**代码块**（```` ``` ````）和**行内代码**（`` ` ``）里，把光标放到函数名/标识符上：
+CodePort is the renamed, re-architected successor. On first activation it offers to copy your settings:
 
-- **F12** 或 **Ctrl+Click** → 直接调用 clangd（`workspace/symbol`）跳到定义
-- 同名函数有多个定义（如各文件里的 `static` 函数）时，VSCode 弹出 Peek 列表选择——与 `.c` 里行为一致
+| Old | New |
+|---|---|
+| `mdCodeLinks.enableFunctionJump` | `codeport.definition.enabled` |
+| `mdCodeLinks.prewarmIndex` | `codeport.index.prewarm` |
+| `mdCodeLinks.clangdPath` | `codeport.clangd.path` |
 
-```c
-// 例: 点 start_worker 即可跳到其定义位置
-start_worker();
-create_task("t1", 100, 2048, worker_main, NULL);
-```
+The migration never overwrites a `codeport.*` value you already set, and the old keys are left
+untouched. You can also run it later via **CodePort: Migrate mdCodeLinks Settings**.
 
-> 前提：项目根（工作区根）有 `compile_commands.json`——**必须在项目根目录**，不搜索子目录。
-> 首次使用需等 clangd 后台索引建好（一般项目约 30~60 秒），之后查询秒回；状态栏有提示。
+---
 
-### 2. 路径/行号链接
-
-```
-`/home/user/project/src/main.c:42`  → 绝对路径, Ctrl+Click 打开并定位行
-`src/main.c:42`                     → 相对项目根（工作区根）
-```
-
-解析：**绝对路径 → 相对项目根（工作区根）**；相对 `.md` 所在目录的路径不解析。
-
-## 环境要求
-
-- VSCode ≥ 1.75
-- 系统有 `clangd` 二进制（自动探测：`/usr/lib/llvm-*/bin/clangd`、`/usr/local/bin/clangd`、`/usr/bin/clangd`、`PATH`）
-- 函数名跳转需要**项目根（工作区根）**有 `compile_commands.json`
-
-## 安装
-
-把项目目录拷贝到 VSCode 扩展目录（目录名须与 `package.json` 版本一致）：
+## Development
 
 ```sh
-cp -r ~/git/md-code-links ~/.vscode-server/extensions/md-code-links-0.0.2
+npm install
+npm run build       # esbuild bundle -> dist/extension.js + dist/wasm/
+npm run watch       # rebuild on change
+npm run typecheck   # tsc --noEmit
+npm test            # all 75 unit + integration tests
+npm run check       # typecheck + build + test
 ```
 
-然后 `Ctrl+Shift+P` → **Developer: Reload Window**（或重连 Remote 窗口）。
+Press **F5** to launch an Extension Development Host.
 
-## 配置（settings.json）
+The test suite includes an end-to-end test that runs the **real bundle** against a stubbed VS Code API
+and a real temporary C project, so the whole chain (Markdown → parser → project detection → index →
+resolver → provider) is covered without launching a GUI. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-| 项 | 默认 | 说明 |
-|---|---|---|
-| `mdCodeLinks.enableFunctionJump` | `true` | 函数名跳转开关 |
-| `mdCodeLinks.prewarmIndex` | `true` | 打开带 `compile_commands.json` 的工作区即后台启动 clangd 预热索引 |
-| `mdCodeLinks.clangdPath` | `""` | clangd 二进制绝对路径；空 = 自动探测 |
+---
 
-## 实现说明
+## Troubleshooting
 
-- **函数名跳转**：markdown `DefinitionProvider` + 最小 LSP over stdio 客户端（零 npm 依赖），懒启动常驻一个 `clangd --compile-commands-dir=<ws> --background-index` 进程；标识符用 `workspace/symbol` 解析（完全匹配优先，模糊匹配兜底，最多 10 个候选）。
-- **索引预热**：clangd 15 的后台索引需"第一个文件打开"才被唤醒（实测：无 `didOpen` 时 5 分钟不建索引；`didOpen` 后约 20 秒全量可查）。扩展自动对 `compile_commands.json` 里的种子文件发 `didOpen` 唤醒索引器。
-- **路径链接**：`DocumentLinkProvider`，行号用 URI fragment `#L502` 定位。
-- **作用范围**：只处理代码块/行内代码内的标识符（围栏配对 + 行内反引号奇偶判断），正文英文不误触。
+- **"no definition found"** — Open **CodePort: Show Log**. The pipeline logs which engines ran and what
+  each returned. Common causes: no `compile_commands.json`, or clangd still building its index (the
+  first lookup in a large project can take 30–60 s).
+- **A jump went to the wrong place** — Hover the symbol: the provenance line names the engine and the
+  evidence. If the index answered wrongly, set `codeport.policy` to `lsp-first`, or
+  `codeport.policy.indexAcceptConfidence` to `1` to always confirm with the server.
+- **The index is disabled** — The log says why (`node:sqlite` missing, or tree-sitter assets absent).
+  Navigation still works through language servers.
+- **Stale results after a big refactor** — Run **CodePort: Rebuild Index**.
 
-## 许可
+## License
 
 MIT
