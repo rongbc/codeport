@@ -231,9 +231,12 @@ meta(key, value)   -- schema_version
 
 表名是 `symbol_references` 而非 `references`，因为后者是 SQL 关键字，会迫使所有语句都加引号。
 
+- **磁盘位置**：`.codeport/index.db`（SQLite，WAL 模式）。同一目录下会自动生成 `.codeport/.gitignore`，
+  确保缓存不会被提交。
 - `Indexer.fullIndex()` 遍历工作区（跳过符号链接与排除项），先一次性加载所需语法，然后只重新解析
   SHA-1 内容哈希发生变化的文件，并清理已删除文件的行。
-- `Indexer.indexPaths()` 是文件监听使用的增量路径。
+- `Indexer.indexPaths()` 是文件监听使用的增量路径：工作区 `FileSystemWatcher` 的增／删／改事件以
+  500 毫秒为一批应用。
 - **一个文件一个事务**，因此单个文件解析失败不会污染索引。
 - tree-sitter 解析与 `node:sqlite` 都是同步的，所以循环每 25 个文件让出一次事件循环 —— 这是大型工作区
   下扩展宿主仍然保持响应的关键。
@@ -244,6 +247,13 @@ meta(key, value)   -- schema_version
 tree-sitter 恢复的是**结构**：函数、方法、聚合类型、枚举成员、typedef、别名、变量、字段、命名空间、宏、
 include。它无法判断 `foo(x)` 究竟指向谁 —— 那是重载解析、模板实例化与宏展开，恰恰是 Language Server
 的职责。索引提供速度与离线覆盖，Language Server 提供正确性；两者都不被要求去做对方的事。
+
+| | CodePort 索引 | Language Server |
+|---|---|---|
+| 速度 | 毫秒级，无需启动服务 | 取决于服务端／其自身索引 |
+| 可离线 | 是 | 需要服务端 |
+| C++ 重载、模板、宏、条件编译 | 否 | 是 |
+| 代价 | tree-sitter 解析 + 极小的 SQLite 库 | 完整的编译器级解析 |
 
 ## 语言判定（三级）
 

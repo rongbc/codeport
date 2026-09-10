@@ -4,8 +4,17 @@
   "description": "Bring source-code navigation to Markdown. Resolve symbols in code blocks and inline code through a local CodePort index and your project's language servers (clangd first).",
   "version": "0.1.0",
   "publisher": "RongBaichuan",
+  "author": "rong baichuan",
   "license": "MIT",
   "icon": "media/codeport_logo.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rongbc/codeport"
+  },
+  "homepage": "https://github.com/rongbc/codeport",
+  "bugs": {
+    "url": "https://github.com/rongbc/codeport/issues"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -262,6 +271,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"test/**/*.test.ts\"",
     "check": "npm run typecheck && npm run build && npm test",
+    "package": "npx --yes @vscode/vsce package",
     "vscode:prepublish": "npm run build"
   },
   "devDependencies": {

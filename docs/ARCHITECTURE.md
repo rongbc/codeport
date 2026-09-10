@@ -232,9 +232,12 @@ meta(key, value)   -- schema_version
 The table is named `symbol_references`, not `references`, because the latter is a SQL keyword that would
 need quoting everywhere.
 
+- **On disk**: `.codeport/index.db` (SQLite in WAL mode). The same directory receives a generated
+  `.codeport/.gitignore`, so the cache is never committed.
 - `Indexer.fullIndex()` walks the workspace (skipping symlinks and excludes), loads each needed grammar
   once, then re-parses only files whose SHA-1 content hash changed, and prunes rows for deleted files.
-- `Indexer.indexPaths()` is the incremental path used by the watcher.
+- `Indexer.indexPaths()` is the incremental path used by the watcher: create/change/delete events from
+  the workspace `FileSystemWatcher` are applied in 500 ms batches.
 - One file is one transaction, so a parse failure cannot corrupt the index.
 - Parsing and `node:sqlite` are synchronous, so the loop yields to the event loop every 25 files; that is
   what keeps the extension host responsive on a large workspace.
@@ -247,6 +250,13 @@ variables, fields, namespaces, macros, includes. It cannot decide what `foo(x)` 
 resolution, template instantiation and macro expansion, which is exactly what the language server is for.
 The index gives speed and offline coverage; the server gives correctness. Neither is asked to do the
 other's job.
+
+| | CodePort Index | Language server |
+|---|---|---|
+| Speed | milliseconds, no server needed | depends on the server / its own index |
+| Works offline | yes | needs the server |
+| C++ overloads, templates, macros, conditional compilation | no | yes |
+| Cost | tree-sitter parse + a tiny SQLite database | full compiler-grade parse |
 
 ## Language detection (3 levels)
 
