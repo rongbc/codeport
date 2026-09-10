@@ -2,6 +2,10 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
+<p align="center">
+  <img src="media/codeport_logo.png" alt="CodePort" width="128" />
+</p>
+
 **CodePort brings source-code navigation to Markdown.** Put the cursor on a symbol written in your
 documentation and jump straight to its definition, peek it, find every reference, or turn the mention
 into a link — using your project's real language server, backed by a fast local index.
@@ -138,7 +142,7 @@ Copy the folder into the VS Code extensions directory, naming it
 
 ```sh
 npm install && npm run build
-cp -r . ~/.vscode-server/extensions/local.codeport-0.1.0
+cp -r . ~/.vscode-server/extensions/RongBaichuan.codeport-0.1.0
 ```
 
 Then run **Developer: Reload Window** (`Ctrl+Shift+P`), or reconnect the Remote window.

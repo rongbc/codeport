@@ -2,6 +2,10 @@
 
 [English](README.md) · **简体中文**
 
+<p align="center">
+  <img src="media/codeport_logo.png" alt="CodePort" width="128" />
+</p>
+
 **CodePort 把源码导航带进 Markdown。** 把光标放在文档中写下的符号上，就能直接跳到它的定义、Peek 定义、
 查找所有引用，或把该处改写成链接 —— 底层使用你项目真正的 Language Server，并由本地索引加速。
 
@@ -132,7 +136,7 @@ index · confidence 0.85 · exact name, language c, kind function, unique result
 
 ```sh
 npm install && npm run build
-cp -r . ~/.vscode-server/extensions/local.codeport-0.1.0
+cp -r . ~/.vscode-server/extensions/RongBaichuan.codeport-0.1.0
 ```
 
 然后执行 **Developer: Reload Window**（`Ctrl+Shift+P`），或重新连接 Remote 窗口。

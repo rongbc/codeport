@@ -3,8 +3,9 @@
   "displayName": "CodePort \u2014 Navigate Markdown to Source Code",
   "description": "Bring source-code navigation to Markdown. Resolve symbols in code blocks and inline code through a local CodePort index and your project's language servers (clangd first).",
   "version": "0.1.0",
-  "publisher": "local",
+  "publisher": "RongBaichuan",
   "license": "MIT",
+  "icon": "media/codeport_logo.png",
   "engines": {
     "vscode": "^1.90.0"
   },

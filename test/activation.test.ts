@@ -69,7 +69,7 @@ before(async () => {
   extension.activate({
     subscriptions: [],
     extensionPath: ROOT,
-    extension: { id: 'local.codeport' },
+    extension: { id: 'RongBaichuan.codeport' },
     globalState: { get: () => undefined, update: async () => {} },
   });
 });
