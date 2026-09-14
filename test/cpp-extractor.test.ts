@@ -155,3 +155,41 @@ test('an absent grammar degrades instead of throwing', async () => {
   });
   assert.equal(parser, undefined);
 });
+
+/**
+ * Regression: the walker was recursive, so a deeply nested tree (long
+ * expressions, nested initialisers/namespaces — typical of generated or
+ * macro-heavy sources) raised `Maximum call stack size exceeded` and aborted the
+ * whole `CodePort: Rebuild Index` run.
+ */
+test('extracts deeply nested trees without overflowing the stack', async () => {
+  const parser = await createTestParser();
+  assert.ok(parser);
+  assert.ok(await parser.load('cpp'));
+
+  const parens = 20000;
+  const chain = 20000;
+  const namespaces = 3000;
+
+  const source = [
+    `int f() { return ${'('.repeat(parens)}1${')'.repeat(parens)}; }`,
+    `int g() { return ${Array.from({ length: chain }, () => 'a').join(' + ')}; }`,
+    `${'namespace deep {'.repeat(namespaces)} int x; ${'}'.repeat(namespaces)}`,
+    // A deeply parenthesised callee must not crash the walker either.
+    `int h() { return ${'('.repeat(parens)}deep_callee${')'.repeat(parens)}(); }`,
+    // ... while a shallow one is still reported as a call reference.
+    `int i() { return ((((callee))))(); }`,
+  ].join('\n');
+
+  const tree = parser.parse('cpp', source);
+  assert.ok(tree);
+
+  const result = new CppExtractor().extract(tree, 'cpp', { references: true });
+  const names = result.symbols.map((symbol) => symbol.name);
+  assert.ok(names.includes('f'));
+  assert.ok(names.includes('g'));
+  assert.ok(names.includes('x'));
+  assert.ok(names.includes('h'));
+  assert.ok(names.includes('i'));
+  assert.ok(result.references.some((reference) => reference.name === 'callee'));
+});

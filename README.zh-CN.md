@@ -81,7 +81,7 @@ index · confidence 0.85 · exact name, language c, kind function, unique result
 
 ```sh
 npm install && npm run package
-code --install-extension codeport-0.1.0.vsix
+code --install-extension codeport-0.1.1.vsix
 ```
 
 想改代码的话，在 VS Code 里打开本仓库按 **F5** 启动 Extension Development Host —— 见[开发](#开发)。
@@ -307,7 +307,7 @@ test/            80 个单元 + 集成测试（最后一个跑真实打包产物
 docs/            ARCHITECTURE.md / ARCHITECTURE.zh-CN.md
 ```
 
-脚本：`npm run build`（esbuild → `dist/`）· `npm run watch` · `npm run typecheck` · `npm test`（80 个测试）· `npm run check`（typecheck + build + test）· `npm run package`（`@vscode/vsce` → `codeport-0.1.0.vsix`）。
+脚本：`npm run build`（esbuild → `dist/`）· `npm run watch` · `npm run typecheck` · `npm test`（84 个测试）· `npm run check`（typecheck + build + test）· `npm run package`（`@vscode/vsce` → `codeport-0.1.1.vsix`）。
 
 按 **F5** 可以启动 Extension Development Host。
 

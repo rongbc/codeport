@@ -11,6 +11,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { LspInitializeResult, LspServerCapabilities } from './protocol.ts';
+import { EXTENSION_VERSION } from '../constants.ts';
 
 export interface LspServerSpec {
   readonly command: string;
@@ -159,7 +160,7 @@ export class LspClient {
           processId: process.pid,
           clientInfo: {
             name: options.clientName ?? 'CodePort',
-            version: options.clientVersion ?? '0.1.0',
+            version: options.clientVersion ?? EXTENSION_VERSION,
           },
           rootUri,
           workspaceFolders: workspaceName ? [{ uri: rootUri, name: workspaceName }] : undefined,

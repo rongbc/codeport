@@ -81,7 +81,7 @@ Package a `.vsix` and install it (recommended), or run the extension from source
 
 ```sh
 npm install && npm run package
-code --install-extension codeport-0.1.0.vsix
+code --install-extension codeport-0.1.1.vsix
 ```
 
 To hack on it instead, open the repository in VS Code and press **F5** to launch an Extension Development Host — see [Development](#development).
@@ -306,7 +306,7 @@ test/            80 unit + integration tests (the last one runs the built bundle
 docs/            ARCHITECTURE.md / ARCHITECTURE.zh-CN.md
 ```
 
-Scripts: `npm run build` (esbuild → `dist/`) · `npm run watch` · `npm run typecheck` · `npm test` (80 tests) · `npm run check` (typecheck + build + test) · `npm run package` (`@vscode/vsce` → `codeport-0.1.0.vsix`).
+Scripts: `npm run build` (esbuild → `dist/`) · `npm run watch` · `npm run typecheck` · `npm test` (84 tests) · `npm run check` (typecheck + build + test) · `npm run package` (`@vscode/vsce` → `codeport-0.1.1.vsix`).
 
 Press **F5** to launch an Extension Development Host.
 

@@ -1,7 +1,7 @@
 /** Shared constants (kept in one place so nothing drifts). */
 
 /** Must match `version` in package.json; sent to language servers as clientInfo. */
-export const EXTENSION_VERSION = '0.1.0';
+export const EXTENSION_VERSION = '0.1.1';
 
 /** Name of the CodePort output channel. */
 export const OUTPUT_CHANNEL_NAME = 'CodePort';

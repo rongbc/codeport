@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-09-14
+
+### Fixed
+
+- **`CodePort: Rebuild Index` no longer fails with `Maximum call stack size exceeded`.** The C/C++
+  extractor walked the syntax tree recursively; generated or macro-heavy sources with deeply nested
+  expressions, initialisers or namespaces overflowed the call stack and aborted the whole rebuild. The
+  walk (and the call-callee resolver) now use an explicit stack / bounded loop, so tree depth is no
+  longer a limit.
+- A single file that fails symbol extraction is now skipped and logged instead of aborting the entire
+  index run.
+- Command titles no longer render with a doubled prefix (`CodePort: CodePort: …`).
+
 ## [0.1.0] - 2026-09-10
 
 CodePort: `md-code-links` re-architected as a Markdown ↔ language-server navigation layer with a local

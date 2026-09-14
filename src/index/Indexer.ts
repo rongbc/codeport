@@ -13,8 +13,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IndexStore } from './IndexStore.ts';
-import type { TreeSitterParser } from './TreeSitterParser.ts';
-import type { ExtractorRegistry } from './SymbolExtractor.ts';
+import type { SyntaxTree, TreeSitterParser } from './TreeSitterParser.ts';
+import type { ExtractorRegistry, ExtractResult, SymbolExtractor } from './SymbolExtractor.ts';
 import { sha1 } from '../util/text.ts';
 import { languageFromPath, matchesGlob, toPosix } from '../util/path.ts';
 
@@ -285,9 +285,8 @@ export class Indexer {
     const extractor = this.extractors.forLanguage(language);
     if (!extractor) return { status: 'skipped' };
 
-    const result = extractor.extract(tree, language, {
-      references: this.options.collectReferences,
-    });
+    const result = this.extractSymbols(extractor, tree, language, filePath);
+    if (!result) return { status: 'skipped' };
 
     this.store.transaction(() => {
       const fileId = this.store.upsertFile({
@@ -301,6 +300,27 @@ export class Indexer {
     });
 
     return { status: 'indexed', symbols: result.symbols.length };
+  }
+
+  /**
+   * Run the extractor defensively: one pathological file (a deeply nested
+   * generated header, say) must be skipped, never allowed to abort the whole
+   * rebuild and surface as a command error.
+   */
+  private extractSymbols(
+    extractor: SymbolExtractor,
+    tree: SyntaxTree,
+    language: string,
+    filePath: string
+  ): ExtractResult | undefined {
+    try {
+      return extractor.extract(tree, language, { references: this.options.collectReferences });
+    } catch (error) {
+      this.logger.warn(
+        `skipping ${filePath}: symbol extraction failed (${(error as Error).message})`
+      );
+      return undefined;
+    }
   }
 }
 

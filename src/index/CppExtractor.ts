@@ -34,6 +34,13 @@ interface WalkState {
   readonly wantReferences: boolean;
 }
 
+/** One pending node of the depth-first walk, with the scope it is visited in. */
+interface Frame {
+  readonly node: SyntaxNode;
+  readonly scope: readonly string[];
+  readonly inAggregate: boolean;
+}
+
 /** Node types that represent a declared name (as opposed to a type or modifier). */
 const DECLARATOR_NODES = new Set([
   'init_declarator',
@@ -61,189 +68,212 @@ export class CppExtractor implements SymbolExtractor {
       includes: [],
       wantReferences: options.references ?? false,
     };
-    visit(tree.rootNode, [], false, state);
+    visitTree(tree.rootNode, state);
     return { symbols: state.symbols, references: state.references, includes: state.includes };
   }
 }
 
 /* ------------------------------- traversal ------------------------------- */
 
-function visit(
-  node: SyntaxNode,
-  scope: readonly string[],
-  inAggregate: boolean,
-  state: WalkState
-): void {
-  switch (node.type) {
-    case 'namespace_definition': {
-      const nameNode = node.childForFieldName('name');
-      if (nameNode) pushSymbol(nameNode.text, nameNode, 'namespace', scope, undefined, state);
-      const body = node.childForFieldName('body');
-      const nextScope = nameNode ? [...scope, nameNode.text] : scope;
-      if (body) recurse(body, nextScope, false, state);
-      return;
-    }
+/**
+ * Depth-first walk over the syntax tree using an explicit stack.
+ *
+ * The walk is deliberately *not* recursive: generated or macro-heavy C/C++ can
+ * nest thousands of nodes deep (long expression chains, nested initialisers or
+ * namespaces), and a recursive walk overflows the call stack — the
+ * `Maximum call stack size exceeded` failure that aborted the whole rebuild.
+ * Children are pushed in reverse so symbols keep their source order.
+ */
+function visitTree(root: SyntaxNode, state: WalkState): void {
+  const stack: Frame[] = [{ node: root, scope: [], inAggregate: false }];
 
-    case 'function_definition': {
-      const declarator = node.childForFieldName('declarator');
-      const info = declarator ? analyzeDeclarator(declarator) : undefined;
-      if (info) {
-        pushSymbol(
-          info.name,
-          info.nameNode,
-          inAggregate ? 'method' : 'function',
-          scope,
-          signatureFor(node, state.text),
-          state,
-          info.container
-        );
-      }
-      const body = node.childForFieldName('body');
-      if (body) recurse(body, scope, false, state);
-      return;
-    }
+  while (stack.length > 0) {
+    const { node, scope, inAggregate } = stack.pop()!;
 
-    case 'declaration':
-    case 'field_declaration': {
-      const isField = node.type === 'field_declaration';
-      for (const declarator of declaredNames(node)) {
-        const info = analyzeDeclarator(declarator);
-        if (!info) continue;
-        const kind: SymbolKind = info.isFunction
-          ? inAggregate || isField
-            ? 'method'
-            : 'function'
-          : inAggregate || isField
-            ? 'field'
-            : 'variable';
-        pushSymbol(
-          info.name,
-          info.nameNode,
-          kind,
-          scope,
-          info.isFunction ? signatureFor(node, state.text) : undefined,
-          state,
-          info.container
-        );
+    switch (node.type) {
+      case 'namespace_definition': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) pushSymbol(nameNode.text, nameNode, 'namespace', scope, undefined, state);
+        const body = node.childForFieldName('body');
+        const nextScope = nameNode ? [...scope, nameNode.text] : scope;
+        if (body) stack.push({ node: body, scope: nextScope, inAggregate: false });
+        continue;
       }
-      // Recurse into non-declarator children (nested struct definitions), and
-      // into initialisers so calls inside them still become references.
-      for (const child of node.namedChildren) {
-        if (DECLARATOR_NODES.has(child.type)) {
-          if (child.type === 'init_declarator') {
-            const value = child.childForFieldName('value');
-            if (value) visit(value, scope, false, state);
+
+      case 'function_definition': {
+        const declarator = node.childForFieldName('declarator');
+        const info = declarator ? analyzeDeclarator(declarator) : undefined;
+        if (info) {
+          pushSymbol(
+            info.name,
+            info.nameNode,
+            inAggregate ? 'method' : 'function',
+            scope,
+            signatureFor(node, state.text),
+            state,
+            info.container
+          );
+        }
+        const body = node.childForFieldName('body');
+        if (body) stack.push({ node: body, scope, inAggregate: false });
+        continue;
+      }
+
+      case 'declaration':
+      case 'field_declaration': {
+        const isField = node.type === 'field_declaration';
+        for (const declarator of declaredNames(node)) {
+          const info = analyzeDeclarator(declarator);
+          if (!info) continue;
+          const kind: SymbolKind = info.isFunction
+            ? inAggregate || isField
+              ? 'method'
+              : 'function'
+            : inAggregate || isField
+              ? 'field'
+              : 'variable';
+          pushSymbol(
+            info.name,
+            info.nameNode,
+            kind,
+            scope,
+            info.isFunction ? signatureFor(node, state.text) : undefined,
+            state,
+            info.container
+          );
+        }
+        // Recurse into non-declarator children (nested struct definitions), and
+        // into initialisers so calls inside them still become references.
+        const frames: Frame[] = [];
+        for (const child of node.namedChildren) {
+          if (DECLARATOR_NODES.has(child.type)) {
+            if (child.type === 'init_declarator') {
+              const value = child.childForFieldName('value');
+              if (value) frames.push({ node: value, scope, inAggregate: false });
+            }
+            continue;
           }
-          continue;
+          frames.push({ node: child, scope, inAggregate: isField });
         }
-        visit(child, scope, isField ? true : false, state);
+        pushFrames(stack, frames);
+        continue;
       }
-      return;
-    }
 
-    case 'struct_specifier':
-    case 'class_specifier':
-    case 'union_specifier': {
-      // A specifier without a body is an elaborated type reference
-      // (`struct Node *next;`), not a definition — emitting it would invent a
-      // bogus symbol in the enclosing scope.
-      const body = node.childForFieldName('body');
-      if (!body) return;
-      const nameNode = node.childForFieldName('name');
-      const kind: SymbolKind =
-        node.type === 'class_specifier'
-          ? 'class'
-          : node.type === 'union_specifier'
-            ? 'union'
-            : 'struct';
-      if (nameNode) pushSymbol(nameNode.text, nameNode, kind, scope, undefined, state);
-      const nextScope = nameNode ? [...scope, nameNode.text] : scope;
-      recurse(body, nextScope, true, state);
-      return;
-    }
+      case 'struct_specifier':
+      case 'class_specifier':
+      case 'union_specifier': {
+        // A specifier without a body is an elaborated type reference
+        // (`struct Node *next;`), not a definition — emitting it would invent a
+        // bogus symbol in the enclosing scope.
+        const body = node.childForFieldName('body');
+        if (!body) continue;
+        const nameNode = node.childForFieldName('name');
+        const kind: SymbolKind =
+          node.type === 'class_specifier'
+            ? 'class'
+            : node.type === 'union_specifier'
+              ? 'union'
+              : 'struct';
+        if (nameNode) pushSymbol(nameNode.text, nameNode, kind, scope, undefined, state);
+        const nextScope = nameNode ? [...scope, nameNode.text] : scope;
+        stack.push({ node: body, scope: nextScope, inAggregate: true });
+        continue;
+      }
 
-    case 'enum_specifier': {
-      const body =
-        node.childForFieldName('body') ??
-        node.namedChildren.find((child) => child.type === 'enumerator_list') ??
-        null;
-      // Same rule as aggregates: only a real definition carries enumerators.
-      if (!body) return;
-      const nameNode = node.childForFieldName('name');
-      if (nameNode) pushSymbol(nameNode.text, nameNode, 'enum', scope, undefined, state);
-      for (const child of body.namedChildren) {
-        if (child.type !== 'enumerator') continue;
-        const enumerator = child.childForFieldName('name') ?? child.namedChildren[0];
-        if (enumerator) {
-          pushSymbol(enumerator.text, enumerator, 'enumerator', scope, undefined, state);
+      case 'enum_specifier': {
+        const body =
+          node.childForFieldName('body') ??
+          node.namedChildren.find((child) => child.type === 'enumerator_list') ??
+          null;
+        // Same rule as aggregates: only a real definition carries enumerators.
+        if (!body) continue;
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) pushSymbol(nameNode.text, nameNode, 'enum', scope, undefined, state);
+        for (const child of body.namedChildren) {
+          if (child.type !== 'enumerator') continue;
+          const enumerator = child.childForFieldName('name') ?? child.namedChildren[0];
+          if (enumerator) {
+            pushSymbol(enumerator.text, enumerator, 'enumerator', scope, undefined, state);
+          }
         }
+        continue;
       }
-      return;
-    }
 
-    case 'type_definition': {
-      const declarator = node.childForFieldName('declarator');
-      const info = declarator ? analyzeDeclarator(declarator) : undefined;
-      if (info) {
-        pushSymbol(info.name, info.nameNode, 'typedef', scope, undefined, state, info.container);
-      }
-      for (const child of node.namedChildren) {
-        if (child === declarator) continue;
-        visit(child, scope, false, state);
-      }
-      return;
-    }
-
-    case 'alias_declaration': {
-      const nameNode = node.childForFieldName('name');
-      if (nameNode) pushSymbol(nameNode.text, nameNode, 'type', scope, undefined, state);
-      return;
-    }
-
-    case 'preproc_def':
-    case 'preproc_function_def': {
-      const nameNode = node.childForFieldName('name');
-      if (nameNode) {
-        pushSymbol(nameNode.text, nameNode, 'macro', scope, oneLine(node.text, 120), state);
-      }
-      return;
-    }
-
-    case 'preproc_include': {
-      const pathNode = node.childForFieldName('path');
-      if (pathNode) state.includes.push(stripIncludeDelimiters(pathNode.text));
-      return;
-    }
-
-    case 'call_expression': {
-      if (state.wantReferences) {
-        const callee = node.childForFieldName('function');
-        const name = callee ? calleeSymbolName(callee) : undefined;
-        if (name && !isKeyword(name)) {
-          state.references.push({
-            name,
-            kind: 'call',
-            line: node.startPosition.row,
-            column: node.startPosition.column,
-          });
+      case 'type_definition': {
+        const declarator = node.childForFieldName('declarator');
+        const info = declarator ? analyzeDeclarator(declarator) : undefined;
+        if (info) {
+          pushSymbol(info.name, info.nameNode, 'typedef', scope, undefined, state, info.container);
         }
+        const frames: Frame[] = [];
+        for (const child of node.namedChildren) {
+          if (child === declarator) continue;
+          frames.push({ node: child, scope, inAggregate: false });
+        }
+        pushFrames(stack, frames);
+        continue;
       }
-      recurse(node, scope, false, state);
-      return;
-    }
 
-    default:
-      recurse(node, scope, inAggregate, state);
+      case 'alias_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) pushSymbol(nameNode.text, nameNode, 'type', scope, undefined, state);
+        continue;
+      }
+
+      case 'preproc_def':
+      case 'preproc_function_def': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          pushSymbol(nameNode.text, nameNode, 'macro', scope, oneLine(node.text, 120), state);
+        }
+        continue;
+      }
+
+      case 'preproc_include': {
+        const pathNode = node.childForFieldName('path');
+        if (pathNode) state.includes.push(stripIncludeDelimiters(pathNode.text));
+        continue;
+      }
+
+      case 'call_expression': {
+        if (state.wantReferences) {
+          const callee = node.childForFieldName('function');
+          const name = callee ? calleeSymbolName(callee) : undefined;
+          if (name && !isKeyword(name)) {
+            state.references.push({
+              name,
+              kind: 'call',
+              line: node.startPosition.row,
+              column: node.startPosition.column,
+            });
+          }
+        }
+        pushChildren(stack, node, scope, false);
+        continue;
+      }
+
+      default:
+        pushChildren(stack, node, scope, inAggregate);
+    }
   }
 }
 
-function recurse(
+/** Push frames so that the first one ends up on top of the stack. */
+function pushFrames(stack: Frame[], frames: readonly Frame[]): void {
+  for (let i = frames.length - 1; i >= 0; i--) stack.push(frames[i]!);
+}
+
+/** Push every named child, preserving source order. */
+function pushChildren(
+  stack: Frame[],
   node: SyntaxNode,
   scope: readonly string[],
-  inAggregate: boolean,
-  state: WalkState
+  inAggregate: boolean
 ): void {
-  for (const child of node.namedChildren) visit(child, scope, inAggregate, state);
+  const children = node.namedChildren;
+  for (let i = children.length - 1; i >= 0; i--) {
+    stack.push({ node: children[i]!, scope, inAggregate });
+  }
 }
 
 /* ------------------------------ declarators ------------------------------ */
@@ -354,30 +384,35 @@ function stripIncludeDelimiters(text: string): string {
 
 /** The identifier a call expression ultimately invokes. */
 function calleeSymbolName(node: SyntaxNode): string | undefined {
-  switch (node.type) {
-    case 'identifier':
-    case 'field_identifier':
-    case 'type_identifier':
-      return node.text;
-    case 'field_expression': {
-      const field = node.childForFieldName('field');
-      return field?.text;
+  // Iterative with a bound: `((((f))))(x)` used to recurse once per pair of
+  // parentheses and could overflow the stack on a pathological expression.
+  let current: SyntaxNode | null = node;
+  for (let depth = 0; current && depth < 64; depth++) {
+    switch (current.type) {
+      case 'identifier':
+      case 'field_identifier':
+      case 'type_identifier':
+        return current.text;
+      case 'field_expression': {
+        const field = current.childForFieldName('field');
+        return field?.text;
+      }
+      case 'qualified_identifier':
+      case 'scoped_identifier': {
+        const full = current.text;
+        const index = full.lastIndexOf('::');
+        return index >= 0 ? full.slice(index + 2) : full;
+      }
+      case 'template_function': {
+        const name = current.childForFieldName('name');
+        return name?.text;
+      }
+      case 'parenthesized_expression':
+        current = current.namedChildren[0] ?? null;
+        break;
+      default:
+        return undefined;
     }
-    case 'qualified_identifier':
-    case 'scoped_identifier': {
-      const full = node.text;
-      const index = full.lastIndexOf('::');
-      return index >= 0 ? full.slice(index + 2) : full;
-    }
-    case 'template_function': {
-      const name = node.childForFieldName('name');
-      return name?.text;
-    }
-    case 'parenthesized_expression': {
-      const inner = node.namedChildren[0];
-      return inner ? calleeSymbolName(inner) : undefined;
-    }
-    default:
-      return undefined;
   }
+  return undefined;
 }
