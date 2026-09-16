@@ -2,8 +2,7 @@
  * CodePort — Navigate Markdown to Source Code.
  *
  * Brings source-code navigation to Markdown. Symbols written inside code blocks
- * and inline code are resolved through a local CodePort index and the project's
- * language servers (clangd first).
+ * and inline code are resolved through a CodeGraph code graph, read in-process.
  *
  * The extension entry point only wires things together; every layer below it is
  * described in `docs/ARCHITECTURE.md`.

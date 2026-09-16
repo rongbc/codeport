@@ -1,4 +1,4 @@
-/** Language-id normalisation shared by the Markdown parser and the adapters. */
+/** Language-id normalisation, shared by the Markdown parser and the resolver. */
 
 const LANGUAGE_ALIASES: Record<string, string> = {
   'c++': 'cpp',
@@ -29,14 +29,6 @@ export function normalizeLanguageId(mention: string): string | undefined {
   const word = mention.trim().split(/[\s,{]/)[0]?.trim().toLowerCase();
   if (!word) return undefined;
   return LANGUAGE_ALIASES[word] ?? word;
-}
-
-/** True when the two language mentions refer to the same language. */
-export function sameLanguage(a: string | undefined, b: string | undefined): boolean {
-  if (!a || !b) return false;
-  const na = normalizeLanguageId(a);
-  const nb = normalizeLanguageId(b);
-  return na !== undefined && na === nb;
 }
 
 /**

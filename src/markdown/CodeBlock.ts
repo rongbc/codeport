@@ -32,7 +32,6 @@ export function normalizeLanguage(info: string): string | undefined {
   return normalizeLanguageId(info);
 }
 
-
 interface FenceMatch {
   char: '`' | '~';
   length: number;
@@ -85,9 +84,4 @@ export function findFencedBlocks(lines: readonly string[]): FencedBlock[] {
     i = closeLine === undefined ? lines.length : closeLine + 1;
   }
   return blocks;
-}
-
-/** True when the line is a fence delimiter for one of the given blocks. */
-export function isFenceDelimiter(line: number, block: FencedBlock): boolean {
-  return line === block.openLine || line === block.closeLine;
 }

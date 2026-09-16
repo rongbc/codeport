@@ -5,7 +5,7 @@
  * equal length, so `` ``a`b`` `` is one span containing ``a`b``.
  */
 
-export interface InlineCodeSpan {
+interface InlineCodeSpan {
   /** Offset of the first content character (after the opening run). */
   readonly start: number;
   /** Offset one past the last content character (before the closing run). */

@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-09-17
+
+### Changed
+
+- Deleted the code the engine replacement left behind in modules that are still live. No behaviour
+  change, but a fair amount of surface: `util/path.ts` lost the glob matcher and source-file classifier
+  it inherited from the retired indexer and shrank from 113 to 19 lines, and `sha1`, `offsetAt`,
+  `isIdentifierChar`, `oneLine`, `sameLanguage`, `SYMBOL_KINDS`, `rangeKey`, `isFenceDelimiter`,
+  `fromVsRange`, `toVsPosition`, `loadedSdk` and `sdkUnavailable` went with it.
+- Removed the unused `text` parameter from `positionAt`/`rangeFromOffsets`, and the now-unreachable
+  `vscode` stub members (`RelativePattern`, `ProgressLocation`, `EventEmitter`, `createFileSystemWatcher`,
+  `withProgress`).
+- `test/fixtures/mock-lsp-server.mjs` is gone: it existed for the deleted LSP client's framing test and
+  nothing referenced it.
+
+### Added
+
+- `noUnusedLocals`, so this class of rot is caught by the build instead of by grepping. The vscode stub
+  also gained the `env.clipboard` the `Copy Command` branch calls — it was missing, and the branch was
+  only unreachable because the stub's prompt returns `undefined`.
+
 ## [0.2.0] - 2026-09-17
 
 ### Changed

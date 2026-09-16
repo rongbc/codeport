@@ -135,7 +135,7 @@ function fakeDocument(workspace: string, text: string): any {
 const token = { isCancellationRequested: false };
 
 function statusText(): string {
-  return handle.stub.statusMessages.map((entry) => entry.message).join('\n');
+  return handle.stub.statusMessages.join('\n');
 }
 
 test('with no index anywhere, a jump resolves to nothing and says why', async () => {

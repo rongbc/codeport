@@ -219,17 +219,6 @@ function expandEntry(candidate: string | undefined): string[] {
 }
 
 let cached: CodegraphSdk | undefined;
-let loadFailed = false;
-
-/** The SDK if it has already been loaded. Synchronous, for cheap pre-flight. */
-export function loadedSdk(): CodegraphSdk | undefined {
-  return cached;
-}
-
-/** True once a load attempt has failed, so callers can stop retrying. */
-export function sdkUnavailable(): boolean {
-  return loadFailed;
-}
 
 /**
  * Load the SDK once and cache it. Returns `undefined` when no installed copy can
@@ -254,14 +243,12 @@ export async function loadCodegraphSdk(options: SdkLookupOptions = {}): Promise<
     }
   }
 
-  loadFailed = true;
   return undefined;
 }
 
 /** Reset the cache. Tests only. */
 export function resetSdkCache(): void {
   cached = undefined;
-  loadFailed = false;
 }
 
 function asSdk(api: unknown): CodegraphSdk | undefined {

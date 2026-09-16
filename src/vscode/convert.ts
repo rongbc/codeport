@@ -3,10 +3,6 @@
 import * as vscode from 'vscode';
 import type { Location, Position, Range } from '../types.ts';
 
-export function toVsPosition(position: Position): vscode.Position {
-  return new vscode.Position(position.line, position.character);
-}
-
 export function toVsRange(range: Range): vscode.Range {
   return new vscode.Range(
     range.start.line,
@@ -18,13 +14,6 @@ export function toVsRange(range: Range): vscode.Range {
 
 export function fromVsPosition(position: vscode.Position): Position {
   return { line: position.line, character: position.character };
-}
-
-export function fromVsRange(range: vscode.Range): Range {
-  return {
-    start: fromVsPosition(range.start),
-    end: fromVsPosition(range.end),
-  };
 }
 
 export function toVsLocation(location: Location): vscode.Location {

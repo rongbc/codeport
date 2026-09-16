@@ -9,7 +9,7 @@ export function pathToUri(filePath: string): string {
 }
 
 /** `file://` URI string -> absolute path. Throws for non-file URIs. */
-export function uriToPath(uri: string): string {
+function uriToPath(uri: string): string {
   if (!uri.startsWith('file:')) {
     throw new Error(`CodePort only supports file URIs, got: ${uri}`);
   }

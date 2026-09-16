@@ -103,7 +103,7 @@ function extractFromChunk(
     }
     const called = ctx.text[probe] === '(';
 
-    const range = rangeFromOffsets(ctx.text, ctx.offsets, absStart, absEnd);
+    const range = rangeFromOffsets(ctx.offsets, absStart, absEnd);
     out.push({
       name,
       raw,
@@ -164,7 +164,6 @@ export class MarkdownParser {
         // `codeRange` spans the delimiters too: for an inline span it is exactly
         // the text that has to be replaced when a source link is inserted.
         const codeRange = rangeFromOffsets(
-          text,
           offsets,
           lineStart + span.openStart,
           lineStart + span.closeEnd
@@ -195,7 +194,7 @@ function blockRange(text: string, offsets: readonly number[], block: FencedBlock
     (offsets[endLine + 1] ?? text.length + 1) - 1,
     text.length
   );
-  return rangeFromOffsets(text, offsets, startOffset, Math.max(startOffset, endOffset));
+  return rangeFromOffsets(offsets, startOffset, Math.max(startOffset, endOffset));
 }
 
 /**

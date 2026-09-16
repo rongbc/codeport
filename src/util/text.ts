@@ -1,6 +1,5 @@
-/** Text helpers: line/offset conversion, ranges and identifier classification. */
+/** Text helpers: line/offset conversion and the keyword filter. */
 
-import { createHash } from 'node:crypto';
 import type { Position, Range } from '../types.ts';
 
 /** Character offsets at which each line starts. Index `i` is the start of line `i`. */
@@ -17,7 +16,7 @@ export function splitLines(text: string): string[] {
 }
 
 /** Convert an absolute character offset into a zero-based Position. */
-export function positionAt(text: string, offsets: readonly number[], offset: number): Position {
+export function positionAt(offsets: readonly number[], offset: number): Position {
   let low = 0;
   let high = offsets.length - 1;
   while (low < high) {
@@ -28,19 +27,9 @@ export function positionAt(text: string, offsets: readonly number[], offset: num
   return { line: low, character: offset - offsets[low]! };
 }
 
-/** Convert a zero-based Position into an absolute character offset. */
-export function offsetAt(text: string, offsets: readonly number[], position: Position): number {
-  const line = Math.max(0, Math.min(position.line, offsets.length - 1));
-  return Math.min(offsets[line]! + position.character, text.length);
-}
-
-export function rangeFromOffsets(
-  text: string,
-  offsets: readonly number[],
-  start: number,
-  end: number
-): Range {
-  return { start: positionAt(text, offsets, start), end: positionAt(text, offsets, end) };
+/** The range between two character offsets, given the line-offset table. */
+export function rangeFromOffsets(offsets: readonly number[], start: number, end: number): Range {
+  return { start: positionAt(offsets, start), end: positionAt(offsets, end) };
 }
 
 /**
@@ -79,21 +68,4 @@ const KEYWORDS = new Set([
 
 export function isKeyword(word: string): boolean {
   return KEYWORDS.has(word);
-}
-
-/** A `sha1` digest, used as the content hash of an indexed file. */
-export function sha1(text: string): string {
-  return createHash('sha1').update(text, 'utf8').digest('hex');
-}
-
-/** `true` when the character can start/continue a C-like identifier. */
-export function isIdentifierChar(ch: string | undefined): boolean {
-  if (!ch) return false;
-  return /[A-Za-z0-9_]/.test(ch);
-}
-
-/** Collapse a signature onto one line and trim excessive length. */
-export function oneLine(text: string, maxLength = 160): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength - 1)}…` : collapsed;
 }

@@ -86,7 +86,7 @@ codegraph · exact name, language c, kind function
 
 ```sh
 npm install && npm run package
-code --install-extension codeport-0.2.0.vsix
+code --install-extension codeport-0.2.1.vsix
 ```
 
 想改代码就用 VS Code 打开本仓库按 **F5** 起 Extension Development Host —— 见[开发](#开发)。
@@ -123,7 +123,7 @@ codegraph index
 | 命令 | 说明 |
 | --- | --- |
 | `CodePort: Show Index Statistics` | 每个工作区的文件 / 节点 / 边数量（读自 CodeGraph）。 |
-| `CodePort: Rebuild Index` | 给出应执行的 `codegraph index <目录>` 命令（索引归 CodeGraph 管）。 |
+| `CodePort: Show Index Rebuild Command` | 给出应执行的 `codegraph index <目录>` 命令（索引归 CodeGraph 管）。 |
 | `CodePort: Show Log` | 管线日志：引擎跑了什么、返回了什么。 |
 
 <br/>
@@ -254,7 +254,7 @@ test/            单元 + 集成测试（后两个跑真实 bundle）
 docs/            ARCHITECTURE.md / ARCHITECTURE.zh-CN.md
 ```
 
-脚本：`npm run build`（esbuild → `dist/`）· `npm run watch` · `npm run typecheck` · `npm test` · `npm run check`（typecheck + build + test）· `npm run package`（`@vscode/vsce` → `codeport-0.2.0.vsix`）。
+脚本：`npm run build`（esbuild → `dist/`）· `npm run watch` · `npm run typecheck` · `npm test` · `npm run check`（typecheck + build + test）· `npm run package`（`@vscode/vsce` → `codeport-0.2.1.vsix`）。
 
 按 **F5** 启动 Extension Development Host。
 

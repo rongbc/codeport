@@ -305,7 +305,7 @@ const RESOLVER_FIXTURE = {
   ],
 };
 
-async function resolverFor(root: string): Promise<{ resolver: CodegraphResolver; service: CodegraphIndexService }> {
+async function resolverFor(): Promise<{ resolver: CodegraphResolver; service: CodegraphIndexService }> {
   process.env.CODEGRAPH_SDK_PATH = FAKE_SDK;
   const service = new CodegraphIndexService({ sdk: { configuredPath: FAKE_SDK } });
   const resolver = new CodegraphResolver({
@@ -328,7 +328,7 @@ test('the resolver is unavailable without a workspace or without a graph', () =>
 
 test('the resolver is available exactly when a graph covers the workspace', async () => {
   const root = fakeGraphRoot(scratch(), RESOLVER_FIXTURE);
-  const { resolver, service } = await resolverFor(root);
+  const { resolver, service } = await resolverFor();
   try {
     assert.equal(resolver.isAvailable({ ...context, workspaceRoot: root }), true);
     // A subdirectory counts: CodeGraph is found by walking up.
@@ -342,7 +342,7 @@ test('the resolver is available exactly when a graph covers the workspace', asyn
 
 test('the resolver maps a hit onto an absolute location with a 0-based line', async () => {
   const root = fakeGraphRoot(scratch(), RESOLVER_FIXTURE);
-  const { resolver, service } = await resolverFor(root);
+  const { resolver, service } = await resolverFor();
   try {
     const outcome = await resolver.resolve({
       ...context,
@@ -372,7 +372,7 @@ test('the resolver maps a hit onto an absolute location with a 0-based line', as
 
 test('the resolver falls back to a prefix match and says so', async () => {
   const root = fakeGraphRoot(scratch(), RESOLVER_FIXTURE);
-  const { resolver, service } = await resolverFor(root);
+  const { resolver, service } = await resolverFor();
   try {
     // Both `nx_start` and `nx_startup_helper` carry the `nx_star` prefix.
     const outcome = await resolver.resolve({ ...context, workspaceRoot: root, reference: { ...context.reference, name: 'nx_star' } });
@@ -387,7 +387,7 @@ test('the resolver falls back to a prefix match and says so', async () => {
 
 test('the resolver answers nothing when the name is unknown', async () => {
   const root = fakeGraphRoot(scratch(), RESOLVER_FIXTURE);
-  const { resolver, service } = await resolverFor(root);
+  const { resolver, service } = await resolverFor();
   try {
     const outcome = await resolver.resolve({ ...context, workspaceRoot: root, reference: { ...context.reference, name: 'not_indexed' } });
     assert.deepEqual(outcome.candidates, []);

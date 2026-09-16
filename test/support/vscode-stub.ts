@@ -22,7 +22,7 @@ export interface StubOptions {
 }
 
 export interface StubState {
-  readonly statusMessages: Array<{ message: string; promise?: Promise<unknown> }>;
+  readonly statusMessages: string[];
   readonly infoMessages: string[];
   readonly warningMessages: string[];
   readonly logLines: string[];
@@ -190,32 +190,12 @@ export function installVscodeStub(options: StubOptions): StubHandle {
     DocumentLink,
     MarkdownString,
     Hover,
-    RelativePattern: class {
-      base: unknown;
-      pattern: string;
-      constructor(base: unknown, pattern: string) {
-        this.base = base;
-        this.pattern = pattern;
-      }
-    },
     ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
-    ProgressLocation: { SourceControl: 1, Window: 10, Notification: 15 },
-    EventEmitter: class {
-      event = () => disposable();
-      fire(): void {}
-      dispose(): void {}
-    },
     workspace: {
       workspaceFolders: [folder],
       getWorkspaceFolder: (uri: Uri) =>
         uri.fsPath.startsWith(options.workspaceRoot) ? folder : undefined,
       getConfiguration,
-      createFileSystemWatcher: () => ({
-        onDidCreate: () => disposable(),
-        onDidChange: () => disposable(),
-        onDidDelete: () => disposable(),
-        dispose: () => void state.disposed.count++,
-      }),
       onDidChangeConfiguration: () => disposable(),
       onDidChangeWorkspaceFolders: () => disposable(),
       onDidCloseTextDocument: () => disposable(),
@@ -246,14 +226,8 @@ export function installVscodeStub(options: StubOptions): StubHandle {
         show: () => {},
         dispose: () => {},
       }),
-      setStatusBarMessage: (message: string, promiseOrTimeout?: unknown) => {
-        state.statusMessages.push({
-          message,
-          promise:
-            promiseOrTimeout instanceof Promise
-              ? (promiseOrTimeout as Promise<unknown>)
-              : undefined,
-        });
+      setStatusBarMessage: (message: string, _promiseOrTimeout?: unknown) => {
+        state.statusMessages.push(message);
         return disposable();
       },
       showInformationMessage: async (message: string) => {
@@ -264,8 +238,11 @@ export function installVscodeStub(options: StubOptions): StubHandle {
         state.warningMessages.push(message);
         return undefined;
       },
-      withProgress: async (_options: unknown, task: (progress: any) => unknown) =>
-        task({ report: () => {} }),
+    },
+    env: {
+      clipboard: {
+        writeText: async (_value: string) => {},
+      },
     },
     commands: {
       registerCommand: (id: string, callback: (...args: any[]) => unknown) => {
@@ -297,21 +274,4 @@ export function installVscodeStub(options: StubOptions): StubHandle {
       nodeModule._load = originalLoad;
     },
   };
-}
-
-/** Wait until `activate` schedules a status-bar task, then await it. */
-export async function awaitStatusTask(
-  state: StubState,
-  timeoutMs = 30_000
-): Promise<string | undefined> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const withPromise = state.statusMessages.find((entry) => entry.promise);
-    if (withPromise?.promise) {
-      await withPromise.promise;
-      return withPromise.message;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  return undefined;
 }

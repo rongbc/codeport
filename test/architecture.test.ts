@@ -133,6 +133,25 @@ test('the CodeGraph index caches are excluded from the package', () => {
   }
 });
 
+test('the CodeGraph SDK path setting is restricted in untrusted workspaces', () => {
+  // `codeport.codegraph.path` is not just a hint: CodePort `import()`s the module
+  // it points at. A workspace ships `.vscode/settings.json`, so without this a
+  // repository could execute arbitrary code in the extension host the moment a
+  // user opened it. VS Code only returns the user-defined value for settings
+  // listed here when the workspace is in Restricted Mode, which is what makes
+  // `supported: 'limited'` an honest declaration rather than a claim.
+  const packageJson = JSON.parse(
+    fs.readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')
+  );
+  const untrusted = packageJson.capabilities?.untrustedWorkspaces;
+  assert.equal(untrusted?.supported, 'limited');
+  assert.ok(
+    Array.isArray(untrusted?.restrictedConfigurations) &&
+      untrusted.restrictedConfigurations.includes('codeport.codegraph.path'),
+    'codeport.codegraph.path must be listed in restrictedConfigurations'
+  );
+});
+
 test('every setting the code reads is contributed in package.json', () => {
   const packageJson = JSON.parse(
     fs.readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')

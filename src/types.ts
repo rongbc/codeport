@@ -46,28 +46,6 @@ export type SymbolKind =
   | 'module'
   | 'unknown';
 
-/** Every kind, useful for validation and for building UI labels. */
-export const SYMBOL_KINDS: readonly SymbolKind[] = [
-  'function',
-  'method',
-  'constructor',
-  'destructor',
-  'class',
-  'struct',
-  'union',
-  'enum',
-  'enumerator',
-  'typedef',
-  'type',
-  'variable',
-  'field',
-  'macro',
-  'namespace',
-  'interface',
-  'module',
-  'unknown',
-];
-
 /** A symbol as described by the symbol engine (CodeGraph). */
 export interface ResolvedSymbol {
   /**
@@ -107,11 +85,6 @@ export interface SymbolReference {
   readonly inline: boolean;
 }
 
-/** Convenience: convert a `Range` into a comparable key. */
-export function rangeKey(range: Range): string {
-  return `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`;
-}
-
 /** True when `position` is inside `range` (end is exclusive, matching LSP). */
 export function rangeContains(range: Range, position: Position): boolean {
   return (
@@ -119,7 +92,7 @@ export function rangeContains(range: Range, position: Position): boolean {
   );
 }
 
-export function comparePosition(a: Position, b: Position): number {
+function comparePosition(a: Position, b: Position): number {
   if (a.line !== b.line) return a.line - b.line;
   return a.character - b.character;
 }

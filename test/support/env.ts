@@ -5,9 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** Repository root. */
-export const ROOT = fileURLToPath(new URL('../..', import.meta.url));
-
 /**
  * The fixture SDK that stands in for a real CodeGraph install.
  *
@@ -17,8 +14,6 @@ export const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 export const FAKE_SDK = fileURLToPath(
   new URL('../fixtures/fake-codegraph-sdk.js', import.meta.url)
 );
-
-export const silentLogger = { info(): void {}, warn(): void {} };
 
 export function tempDir(prefix = 'codeport-test-'): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));

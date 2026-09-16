@@ -87,7 +87,7 @@ Package a `.vsix` and install it (recommended), or run the extension from source
 
 ```sh
 npm install && npm run package
-code --install-extension codeport-0.2.0.vsix
+code --install-extension codeport-0.2.1.vsix
 ```
 
 To hack on it instead, open the repository in VS Code and press **F5** to launch an Extension Development Host — see [Development](#development).
@@ -124,7 +124,7 @@ Ratings and decisions are logged: **CodePort: Show Log** opens the output channe
 | Command | Description |
 | --- | --- |
 | `CodePort: Show Index Statistics` | Files / nodes / edges per workspace, read from CodeGraph. |
-| `CodePort: Rebuild Index` | Shows the `codegraph index <folder>` command to run (CodeGraph owns the index). |
+| `CodePort: Show Index Rebuild Command` | Shows the `codegraph index <folder>` command to run (CodeGraph owns the index). |
 | `CodePort: Show Log` | The pipeline log: what the engine ran and what it returned. |
 
 <br/>
@@ -255,7 +255,7 @@ test/            unit + integration tests (the last two run the built bundle)
 docs/            ARCHITECTURE.md / ARCHITECTURE.zh-CN.md
 ```
 
-Scripts: `npm run build` (esbuild → `dist/`) · `npm run watch` · `npm run typecheck` · `npm test` · `npm run check` (typecheck + build + test) · `npm run package` (`@vscode/vsce` → `codeport-0.2.0.vsix`).
+Scripts: `npm run build` (esbuild → `dist/`) · `npm run watch` · `npm run typecheck` · `npm test` · `npm run check` (typecheck + build + test) · `npm run package` (`@vscode/vsce` → `codeport-0.2.1.vsix`).
 
 Press **F5** to launch an Extension Development Host.
 

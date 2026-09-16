@@ -1,8 +1,8 @@
 {
   "name": "codeport",
   "displayName": "CodePort \u2014 Navigate Markdown to Source Code",
-  "description": "Bring source-code navigation to Markdown. Resolve symbols in code blocks and inline code through a local CodePort index and your project's language servers (clangd first).",
-  "version": "0.2.0",
+  "description": "Bring source-code navigation to Markdown. Resolve symbols in code blocks and inline code through a CodeGraph code graph, read in-process with no language server.",
+  "version": "0.2.1",
   "publisher": "RongBaichuan",
   "author": "rong baichuan",
   "license": "MIT",
@@ -28,12 +28,10 @@
     "definition",
     "link",
     "symbol",
-    "index",
-    "tree-sitter",
-    "clangd",
-    "lsp",
-    "c",
-    "cpp"
+    "codegraph",
+    "navigation",
+    "references",
+    "hover"
   ],
   "extensionKind": [
     "workspace"
@@ -46,11 +44,14 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "CodePort starts language servers and writes a local index under .codeport/. In an untrusted workspace the index is not built."
+      "restrictedConfigurations": [
+        "codeport.codegraph.path"
+      ],
+      "description": "CodePort reads a CodeGraph index and opens source files. In an untrusted workspace codeport.codegraph.path is ignored, because CodePort imports the module that path points at."
     },
     "virtualWorkspaces": {
       "supported": false,
-      "description": "CodePort needs a real file system to index sources and locate compile_commands.json."
+      "description": "CodePort needs a real file system to read a CodeGraph index and open source files."
     }
   },
   "contributes": {
@@ -77,7 +78,7 @@
       },
       {
         "command": "codeport.rebuildIndex",
-        "title": "Rebuild Index",
+        "title": "Show Index Rebuild Command",
         "category": "CodePort"
       },
       {
