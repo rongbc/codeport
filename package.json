@@ -2,7 +2,7 @@
   "name": "codeport",
   "displayName": "CodePort \u2014 Navigate Markdown to Source Code",
   "description": "Bring source-code navigation to Markdown. Resolve symbols in code blocks and inline code through a CodeGraph code graph, read in-process with no language server.",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "publisher": "RongBaichuan",
   "author": "rong baichuan",
   "license": "MIT",

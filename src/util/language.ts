@@ -56,3 +56,14 @@ export function sameLanguageFamily(a: string | undefined, b: string | undefined)
   if (na === nb) return true;
   return LANGUAGE_FAMILIES[na] === LANGUAGE_FAMILIES[nb] && LANGUAGE_FAMILIES[na] !== undefined;
 }
+
+/**
+ * True for a C-family dialect (`c`, `cpp`, `objective-c`, `cuda-cpp`).
+ *
+ * Used by the build signal: `compile_commands.json` is a C/C++ artifact, so only
+ * a C-family candidate may be reordered by it. An assembly or Rust node that
+ * happens to share the database's directory is left alone.
+ */
+export function isCFamilyLanguage(language: string | undefined): boolean {
+  return sameLanguageFamily(language, 'c');
+}

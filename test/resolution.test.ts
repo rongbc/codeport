@@ -1,5 +1,5 @@
 /**
- * Ranking, merging, the pipeline, and the CodeGraph resolver.
+ * Ranking, merging, the pipeline, the CodeGraph resolver, and the build signal.
  *
  * There is no numeric confidence to assert any more — deliberately. What is
  * asserted is the **ordering evidence**: how many independent signals agree with
@@ -11,11 +11,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  BUILD_SIGNAL,
   MAX_RANK,
+  STRONG_DEFINITION,
   containerAgrees,
   kindsCompatible,
   rankCandidate,
 } from '../src/resolution/Ranking.ts';
+import { COMPILE_COMMANDS_FILE, CompileCommandsIndex } from '../src/resolution/CompileCommands.ts';
+import { isWeakDefinition } from '../src/resolution/WeakLinkage.ts';
 import { CODEGRAPH_RESOLVER_ID, type ResolutionResult, type ResolveContext, type SymbolResolver } from '../src/resolution/Resolver.ts';
 import { ResolverPipeline, bestRank, mergeCandidates } from '../src/resolution/ResolverPipeline.ts';
 import { CodegraphResolver } from '../src/resolution/CodegraphResolver.ts';
@@ -404,4 +408,358 @@ test('the resolver degrades when the graph cannot be opened', async () => {
   assert.equal(resolver.isAvailable({ ...context, workspaceRoot: root }), true);
   const outcome = await resolver.resolve({ ...context, workspaceRoot: root });
   assert.deepEqual(outcome.candidates, []);
+});
+
+/* ------------------------------ build signal ------------------------------ */
+
+/**
+ * Two chips, one name: the `up_allocate_heap` shape. The graph cannot tell them
+ * apart, and the fixture order (`chip-a` first) is what the resolver offers when
+ * nothing knows which file the build compiles.
+ */
+const DUPLICATE_FIXTURE = {
+  nodes: [
+    node({
+      id: 'chip-a',
+      name: 'up_allocate_heap',
+      qualifiedName: 'nx::up_allocate_heap',
+      kind: 'function',
+      language: 'c',
+      filePath: 'arch/chip-a/allocateheap.c',
+      startLine: 60,
+      endLine: 62,
+    }),
+    node({
+      id: 'chip-b',
+      name: 'up_allocate_heap',
+      qualifiedName: 'nx::up_allocate_heap',
+      kind: 'function',
+      language: 'c',
+      filePath: 'arch/chip-b/allocateheap.c',
+      startLine: 60,
+      endLine: 62,
+    }),
+  ],
+};
+
+/** Write a compilation database into `dir`; `units` are relative to `dir`. */
+function writeCompileCommands(dir: string, units: readonly string[]): string {
+  const cdb = path.join(dir, COMPILE_COMMANDS_FILE);
+  const entries = units.map((file) => ({ directory: dir, file }));
+  fs.writeFileSync(cdb, JSON.stringify(entries, null, 2));
+  return cdb;
+}
+
+test('the build narrows the list to the definition it compiles', async () => {
+  const root = fakeGraphRoot(scratch(), DUPLICATE_FIXTURE);
+  // Only chip-b is a translation unit of this build, so chip-a is not part of it
+  // at all: the jump goes straight to the one answer instead of a Peek list.
+  writeCompileCommands(root, ['arch/chip-b/allocateheap.c']);
+
+  const { resolver, service } = await resolverFor();
+  try {
+    const outcome = await resolver.resolve({
+      ...context,
+      workspaceRoot: root,
+      language: 'c',
+      // A fully corroborated mention: named, qualified, fenced, call-shaped.
+      reference: {
+        ...context.reference,
+        name: 'up_allocate_heap',
+        container: 'nx',
+        kindHint: 'function',
+      },
+    });
+
+    assert.equal(outcome.candidates.length, 1, 'the other chip is dropped, not offered');
+    const best = outcome.candidates[0]!;
+    assert.equal(best.symbol?.id, 'chip-b');
+    assert.equal(best.rank, MAX_RANK + 1, 'the build signal is the one signal past MAX_RANK');
+    assert.equal(best.reason, `exact name, qualifier nx, language c, kind function, ${BUILD_SIGNAL.reason}`);
+  } finally {
+    service.closeAll();
+  }
+});
+
+test('a build database that does not know the name narrows nothing', async () => {
+  const root = fakeGraphRoot(scratch(), DUPLICATE_FIXTURE);
+  // The database exists and is healthy, but this build compiles neither chip — the
+  // realistic note-about-another-platform case (`sim:nsh` while a board is
+  // configured). Every candidate survives, exactly as without a database.
+  writeCompileCommands(root, ['arch/other/allocateheap.c']);
+
+  const { resolver, service } = await resolverFor();
+  try {
+    const outcome = await resolver.resolve({
+      ...context,
+      workspaceRoot: root,
+      language: 'c',
+      reference: { ...context.reference, name: 'up_allocate_heap', kindHint: 'function' },
+    });
+
+    assert.deepEqual(
+      outcome.candidates.map((found) => found.symbol?.id),
+      ['chip-a', 'chip-b']
+    );
+    for (const found of outcome.candidates) {
+      assert.ok(!found.reason?.includes(BUILD_SIGNAL.reason), `got: ${found.reason}`);
+    }
+  } finally {
+    service.closeAll();
+  }
+});
+
+test('a strong definition beats the weak default it overrides', async () => {
+  const root = fakeGraphRoot(scratch(), {
+    nodes: [
+      node({ id: 'weak', name: 'up_allocate_heap', language: 'c', filePath: 'arch/generic/allocateheap.c', startLine: 2, endLine: 4 }),
+      node({ id: 'strong', name: 'up_allocate_heap', language: 'c', filePath: 'arch/chip/allocateheap.c', startLine: 1, endLine: 3 }),
+    ],
+  });
+  // Both files are compiled — NuttX's shape exactly: a generic `weak_function`
+  // default plus the chip's override. The linker keeps the strong one, so that is
+  // the only answer worth jumping to.
+  fs.mkdirSync(path.join(root, 'arch/generic'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'arch/chip'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'arch/generic/allocateheap.c'),
+    '/* the generic default */\nvoid weak_function up_allocate_heap(void **h, size_t *s)\n{\n  (void)h;\n}\n'
+  );
+  fs.writeFileSync(
+    path.join(root, 'arch/chip/allocateheap.c'),
+    'void up_allocate_heap(void **h, size_t *s)\n{\n  (void)h;\n}\n'
+  );
+  writeCompileCommands(root, ['arch/generic/allocateheap.c', 'arch/chip/allocateheap.c']);
+
+  const { resolver, service } = await resolverFor();
+  try {
+    const outcome = await resolver.resolve({
+      ...context,
+      workspaceRoot: root,
+      language: 'c',
+      reference: { ...context.reference, name: 'up_allocate_heap', kindHint: 'function' },
+    });
+
+    assert.equal(outcome.candidates.length, 1);
+    const best = outcome.candidates[0]!;
+    assert.equal(best.symbol?.id, 'strong');
+    assert.ok(best.reason?.endsWith(STRONG_DEFINITION.reason), `got: ${best.reason}`);
+  } finally {
+    service.closeAll();
+  }
+});
+
+test('every build candidate being weak keeps the whole list', async () => {
+  const root = fakeGraphRoot(scratch(), {
+    nodes: [
+      node({ id: 'weak-a', name: 'hook', language: 'c', filePath: 'arch/a/hook.c', startLine: 1, endLine: 3 }),
+      node({ id: 'weak-b', name: 'hook', language: 'c', filePath: 'arch/b/hook.c', startLine: 1, endLine: 3 }),
+    ],
+  });
+  fs.mkdirSync(path.join(root, 'arch/a'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'arch/b'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'arch/a/hook.c'), 'void weak_function hook(void) {}\n');
+  fs.writeFileSync(path.join(root, 'arch/b/hook.c'), '__attribute__((weak)) void hook(void) {}\n');
+  writeCompileCommands(root, ['arch/a/hook.c', 'arch/b/hook.c']);
+
+  const { resolver, service } = await resolverFor();
+  try {
+    const outcome = await resolver.resolve({
+      ...context,
+      workspaceRoot: root,
+      language: 'c',
+      reference: { ...context.reference, name: 'hook' },
+    });
+
+    assert.deepEqual(
+      outcome.candidates.map((found) => found.symbol?.id),
+      ['weak-a', 'weak-b'],
+      'nothing can be preferred, so nothing is hidden'
+    );
+  } finally {
+    service.closeAll();
+  }
+});
+
+test('narrowing happens before the 20-candidate cap', async () => {
+  // A name with many definitions where the compiled one sorts last: the cap must
+  // not be what decides the jump.
+  const nodes = Array.from({ length: 25 }, (_, index) =>
+    node({
+      id: `dup-${index}`,
+      name: 'hook',
+      language: 'c',
+      filePath: `arch/chip-${String(index).padStart(2, '0')}/hook.c`,
+      startLine: 1,
+      endLine: 3,
+    })
+  );
+  const root = fakeGraphRoot(scratch(), { nodes });
+  writeCompileCommands(root, ['arch/chip-24/hook.c']);
+
+  const { resolver, service } = await resolverFor();
+  try {
+    const outcome = await resolver.resolve({
+      ...context,
+      workspaceRoot: root,
+      language: 'c',
+      reference: { ...context.reference, name: 'hook' },
+    });
+
+    assert.equal(outcome.candidates.length, 1);
+    assert.equal(outcome.candidates[0]!.symbol?.id, 'dup-24');
+  } finally {
+    service.closeAll();
+  }
+});
+
+test('the build signal never touches a non-C candidate, and the lookup is injectable', async () => {
+  const root = fakeGraphRoot(scratch(), {
+    nodes: [
+      node({ id: 'c-helper', name: 'helper', language: 'c', filePath: 'src/helper.c', startLine: 4, endLine: 6 }),
+      node({ id: 'py-helper', name: 'helper', language: 'python', filePath: 'tools/helper.py', startLine: 4, endLine: 6 }),
+    ],
+  });
+
+  const asked: string[] = [];
+  const { service } = await resolverFor();
+  const resolver = new CodegraphResolver({
+    lookup: (key) => service.lookup(key),
+    open: (key) => service.open(key),
+    // Every file is "in the build", so only the C/C++ gate can explain a miss.
+    compileCommands: () => ({
+      path: '/fixture/compile_commands.json',
+      count: 1,
+      has: (file: string) => {
+        asked.push(file);
+        return true;
+      },
+    }),
+  });
+
+  try {
+    const outcome = await resolver.resolve({
+      ...context,
+      workspaceRoot: root,
+      language: 'c',
+      reference: { ...context.reference, name: 'helper' },
+    });
+    const byId = new Map(outcome.candidates.map((found) => [found.symbol?.id, found]));
+
+    assert.equal(byId.get('c-helper')!.rank, 3, 'exact name + language + the build signal');
+    assert.ok(byId.get('c-helper')!.reason?.includes(BUILD_SIGNAL.reason));
+    assert.equal(byId.get('py-helper')!.rank, 0, 'a Python candidate is not reordered by a C database');
+    assert.ok(!byId.get('py-helper')!.reason?.includes(BUILD_SIGNAL.reason));
+    assert.ok(
+      !asked.includes(path.join(root, 'tools/helper.py')),
+      'the database is not even asked about a non-C candidate'
+    );
+  } finally {
+    service.closeAll();
+  }
+});
+
+test('the database finder walks up from the note and never leaves the workspace', () => {
+  const outer = scratch();
+  const root = path.join(outer, 'ws');
+  const noteDir = path.join(root, 'note', 'deep');
+  fs.mkdirSync(noteDir, { recursive: true });
+  const cdb = writeCompileCommands(root, ['nuttx/src/built.c']);
+
+  const index = new CompileCommandsIndex();
+  const found = index.find(noteDir, root);
+  assert.equal(found?.path, cdb);
+  assert.equal(found?.has(path.join(root, 'nuttx/src/built.c')), true);
+  assert.equal(found?.has(path.join(root, 'nuttx/src/other.c')), false);
+
+  // Elsewhere under the same parent is outside the workspace, so the workspace's
+  // database must not answer for it — the real case is a `note/` symlink that
+  // points out of the workspace.
+  const outside = path.join(outer, 'elsewhere');
+  fs.mkdirSync(outside);
+  assert.equal(index.find(outside, root), undefined);
+});
+
+test('a build directory one level below the root is found without guessing layout', () => {
+  const root = scratch();
+  fs.mkdirSync(path.join(root, 'nuttx'));
+  writeCompileCommands(path.join(root, 'nuttx'), ['sched/nx_start.c']);
+
+  const found = new CompileCommandsIndex().find(root, root);
+  assert.equal(found?.has(path.join(root, 'nuttx/sched/nx_start.c')), true);
+});
+
+test('a nearer database wins over the workspace one', () => {
+  const root = scratch();
+  const noteDir = path.join(root, 'note');
+  fs.mkdirSync(noteDir);
+  writeCompileCommands(root, ['root.c']);
+  writeCompileCommands(noteDir, ['note.c']);
+
+  const found = new CompileCommandsIndex().find(noteDir, root);
+  assert.equal(found?.has(path.join(noteDir, 'note.c')), true);
+  assert.equal(found?.has(path.join(root, 'root.c')), false);
+});
+
+test('absolute translation-unit paths are used as they are', () => {
+  const root = scratch();
+  const unit = path.join(root, 'nuttx/arch/stm32.c');
+  fs.writeFileSync(path.join(root, COMPILE_COMMANDS_FILE), JSON.stringify([{ file: unit }]));
+
+  assert.equal(new CompileCommandsIndex().find(root, root)?.has(unit), true);
+});
+
+test('a rewritten database is noticed, and a broken one is simply no signal', () => {
+  const root = scratch();
+  const index = new CompileCommandsIndex();
+
+  writeCompileCommands(root, ['a.c']);
+  assert.equal(index.find(root, root)?.has(path.join(root, 'a.c')), true);
+
+  // A new build (bear, CMake) rewrites the JSON; the cache is invalidated by
+  // mtime and size, so the next jump sees the new units without a reload.
+  writeCompileCommands(root, ['b.c', 'c.c']);
+  const rewritten = index.find(root, root);
+  assert.equal(rewritten?.has(path.join(root, 'b.c')), true);
+  assert.equal(rewritten?.has(path.join(root, 'a.c')), false);
+
+  const broken = scratch();
+  fs.writeFileSync(path.join(broken, COMPILE_COMMANDS_FILE), '{ not json');
+  assert.equal(new CompileCommandsIndex().find(broken, broken), undefined);
+
+  const empty = scratch();
+  fs.writeFileSync(path.join(empty, COMPILE_COMMANDS_FILE), '[]');
+  assert.equal(new CompileCommandsIndex().find(empty, empty), undefined);
+});
+
+/* ------------------------------ weak linkage ------------------------------ */
+
+test('weak markers are read from the definition line, and only before the name', () => {
+  const root = scratch();
+  const file = path.join(root, 'hook.c');
+  const lines = [
+    'void weak_function hook(void) {}',
+    '__attribute__((weak)) void other(void) {}',
+    'WEAK void third(void) {}',
+    'void strong(void) {}',
+    // A parameter called `weak` must not be read as linkage.
+    'int compare(int weak, int strong) { return weak - strong; }',
+    // Nor a word `weak` that comes after the definition: it is not linkage.
+    'int hook(int weak) { return weak; } /* not weak linkage */',
+    'int late(int weak) { return weak; }',
+  ];
+  fs.writeFileSync(file, `${lines.join('\n')}\n`);
+
+  assert.equal(isWeakDefinition(file, 0, 'hook'), true);
+  assert.equal(isWeakDefinition(file, 1, 'other'), true);
+  assert.equal(isWeakDefinition(file, 2, 'third'), true);
+  assert.equal(isWeakDefinition(file, 3, 'strong'), false);
+  assert.equal(isWeakDefinition(file, 4, 'compare'), false, 'a parameter named weak is not linkage');
+  assert.equal(isWeakDefinition(file, 5, 'hook'), false, 'the marker only counts before the name');
+  assert.equal(isWeakDefinition(file, 6, 'late'), false);
+  assert.equal(isWeakDefinition(file, 5, 'absent'), false, 'a line without the name is unknown');
+
+  // Never a reason to hide anything: an unreadable file, or a line past the end.
+  assert.equal(isWeakDefinition(path.join(root, 'missing.c'), 0, 'hook'), false);
+  assert.equal(isWeakDefinition(file, 999, 'hook'), false);
 });

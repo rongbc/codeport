@@ -34,6 +34,8 @@ nxsched_add_readytorun(tcb);
 
 Multiple definitions (for example `static` functions with the same name in different files) open the usual Peek list — identical to the experience inside a `.c` file.
 
+For **C/C++ projects with a `compile_commands.json`**, that list collapses to the one definition your build actually uses: candidates outside the build are dropped, and among the survivors a weak default (`weak_function`) loses to the chip's strong override. When the database has no answer for the name — a note about another board, or `sim:nsh` while a board is configured — nothing is dropped and you get the usual Peek list.
+
 ### Find All References
 
 Finds every reference to a Markdown symbol. CodePort resolves the mention to a definition and then asks CodeGraph for its usages; the graph's edges carry the exact line and column of each call site, so the results land where the compiler would put them.

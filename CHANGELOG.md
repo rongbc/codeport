@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3] - 2026-09-17
+
+### Changed
+
+- **The build signal now narrows, it no longer merely reorders.** 0.2.2 ranked a
+  `compile_commands.json` translation unit first but still returned all twenty same-named definitions, so a
+  Ctrl+Click in a note opened a Peek list — and whichever entry was taken became the file clangd then
+  preferred for that symbol in source files. With a C/C++ build database that has an answer for the name,
+  the answer now *replaces* the list: C-family candidates outside the build are dropped (candidates of
+  another language are never dropped, because a C/C++ database cannot speak for them), and among the
+  survivors a weak definition loses to a strong one. Verified on this repository's own notes:
+  `up_allocate_heap` resolves to exactly one location, the chip override
+  (`nuttx/arch/src/common/stm32/stm32_allocateheap_m3m4_v1.c:659`), not the generic `weak_function` default
+  and not another chip's file. When the database has no answer for the name nothing is dropped, so notes
+  about a board or `sim:nsh` the workspace is not configured for still resolve as before.
+- Narrowing runs before the `MAX_CANDIDATES` cap, so a definition that a name-ordered graph query would have
+  pushed past the twentieth hit is still found.
+- `test/resolution.test.ts` grew from 31 to 36 tests (narrowing, the no-answer fallback, strong-over-weak,
+  weak-linkage parsing, and the cap interaction).
+
+### Added
+
+- `src/resolution/WeakLinkage.ts`: detects a weak-linkage marker (`weak_function`, `__attribute__((weak))`,
+  `WEAK`) on the definition's own source line, reading only the text in front of the symbol's name. This is
+  the tie-break the linker applies between NuttX's generic ARCH default and a chip's override, and the only
+  place it exists in a graph built without a preprocessor and without a link step.
+- `STRONG_DEFINITION`, the reason a narrowed candidate carries when a weak definition was dropped.
+
+## [0.2.2] - 2026-09-17
+
+### Added
+
+- **The build signal: `compile_commands.json` breaks ties between same-named definitions.** A static
+  graph returns one `up_allocate_heap` definition per chip, all with identical evidence, so the order
+  between them fell back to `(file_path, start_line)` — which is how a jump lands on another chip's file.
+  For C/C++ projects that have a compilation database, a candidate whose file is a translation unit of that
+  build now carries one more point (`BUILD_SIGNAL`) and is offered first. It is an optimization, not a
+  filter: candidates outside the build keep their mention evidence and stay in the Peek list, no database
+  means no signal at all, and non-C/C++ candidates are never reordered by a C/C++ database. New module
+  `src/resolution/CompileCommands.ts` (discovery walks up from the Markdown file but never leaves the
+  workspace; parsing is cached and invalidated by mtime and size, so `bear -- make` after a platform switch
+  is picked up without a reload).
+
 ## [0.2.1] - 2026-09-17
 
 ### Changed

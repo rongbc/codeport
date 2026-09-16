@@ -44,8 +44,47 @@ export interface Ranking {
   readonly reasons: string[];
 }
 
-/** The most evidence a single mention can contribute. */
+/**
+ * The most evidence a single **mention** can contribute (see `rankCandidate`).
+ *
+ * `CodegraphResolver` can take one candidate one point above this with
+ * {@link BUILD_SIGNAL}: that point is evidence about the candidate's file and the
+ * project's build, not about the mention, so it is added where the candidates are
+ * assembled rather than here.
+ */
 export const MAX_RANK = 4;
+
+/**
+ * The build signal, contributed by `CodegraphResolver`.
+ *
+ * It answers the one question a static graph cannot: `up_allocate_heap` has one
+ * definition per chip, and only a compilation database knows which of them the
+ * current build compiles. Nothing about the *mention* can agree or disagree with a
+ * build, which is why this is not a `rankCandidate` signal, and why it is the one
+ * signal that can reach `MAX_RANK + 1`.
+ *
+ * C/C++ only, and only when a `compile_commands.json` actually exists — the whole
+ * rationale lives in `CompileCommands.ts`.
+ */
+export const BUILD_SIGNAL = {
+  points: 1,
+  reason: 'in compile_commands.json',
+} as const;
+
+/**
+ * The narrowing reason, appended by `CodegraphResolver` when the build database
+ * *replaced* candidates instead of merely reordering them.
+ *
+ * The survivors are the strong definitions of a name whose weak default the linker
+ * discards — NuttX's `weak_function` ARCH hooks are the canonical shape, and the
+ * difference between jumping to a chip's real `up_allocate_heap` and jumping to the
+ * generic no-op it overrides. Zero points on purpose: narrowing decides which
+ * candidates exist, not how they rank. See `WeakLinkage.ts`.
+ */
+export const STRONG_DEFINITION = {
+  points: 0,
+  reason: 'strong definition',
+} as const;
 
 /**
  * Rank one candidate against the mention that produced it.

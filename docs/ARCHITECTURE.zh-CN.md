@@ -70,6 +70,8 @@ src/
 ├── resolution/
 │   ├── Resolver.ts              SymbolResolver, ResolveContext, ResolutionResult, candidate
 │   ├── Ranking.ts               证据信号，以及它们产生的依据文案
+│   ├── CompileCommands.ts       `compile_commands.json` 的定位、解析与缓存（build 信号）
+│   ├── WeakLinkage.ts           从定义行判断弱链接（强定义压过弱定义）
 │   ├── ResolverPipeline.ts      顺序执行、单 resolver 错误隔离、合并
 │   └── CodegraphResolver.ts     唯一的引擎
 ├── providers/                   Definition / Reference / Hover / DocumentLink
@@ -139,8 +141,43 @@ interface ResolutionResult {
 | 提及形状与类型一致 | `+1` |
 | 限定符矛盾 | `−1` |
 | 语言矛盾 | `−1` |
+| 候选所在文件出现在项目的 `compile_commands.json` 里 | `+1` |
 
 因此证据齐全的命中 rank 为 `4`；没有围栏的裸 `` `nx_start` `` 为 `1`。
+
+最后一行不是 `rankCandidate` 的信号：*提及*本身不可能与某次构建一致或不一致。它由 `CodegraphResolver`
+在组装候选时加上，数据来自 `resolution/CompileCommands.ts`，也是唯一能让候选超过 `MAX_RANK` 的信号。
+
+### 构建收窄（build narrowing）
+
+**对"有 `compile_commands.json` 的 C/C++ 项目"，只要数据库对这个名字有答案，它就直接替换图谱给出的列表，
+而不只是重排。** 图谱是整棵源码树的静态视图，所以 NuttX 这类 ARCH 钩子（`up_allocate_heap` 每个芯片一个
+定义）会返回二十个证据完全相同的候选，只能靠 `(file_path, start_line)` 排序 —— 那是代码的属性，不是构建的
+属性，Peek 列表等于抛硬币。编译数据库是唯一知道"本次构建到底编译了哪个文件"的产物（`bear -- make`、CMake、
+`ninja -t compdb`），而"*本次*构建用的是哪个定义"才是跳转该回答的问题。`CodegraphResolver.ts` 里的
+`narrowToBuild()` 分三步落实：
+
+1. **构建里的 C 族候选留下，C 族里其余候选丢掉。** 其余那些按定义就不属于本次构建。
+2. **绝不丢其它语言的定义。** 编译数据库是 C/C++ 的产物，不能因此隐藏同名的 Python 或 Rust 定义；这些候选
+   原样存活。
+3. **强定义压过弱定义。** 那两个 `up_allocate_heap` 可能都真的是本次构建的编译单元，此时成员资格无法区分它们
+   —— 但链接器可以：NuttX 的通用默认实现声明为 `weak_function`，芯片覆盖版本则不是。`WeakLinkage.ts` 从定义
+   自身那一行源码里读出这个标记，因为在没有预处理、也没有链接步骤的图谱里，这是该事实唯一存在的地方。
+
+收窄发生在 `MAX_CANDIDATES` 上限**之前**，所以即使按名字排序会把构建真正编译的那个定义挤出前二十，它依然能
+被找到。
+
+四条取舍让收窄保持克制：
+
+- **没有答案就不收窄。** 笔记本就是横向对比平台的地方，里面完全可能提到当前 `.config` 不参与构建的符号
+  （另一块板、`sim:nsh`）。当一个构建内候选都没有时，什么都不丢，完整列表带着提及证据原样返回 —— 与之前
+  行为完全一致。
+- **失败不算错误。** 没有数据库、JSON 读不动、数据库来自另一个平台：不收窄、也没有信号。定位从 Markdown
+  文件向上走但绝不越出工作区，所以指向别处的 `note/` 符号链接不会误捡到无关的构建。
+- **弱链接的判断刻意保守。** 只读图谱指向的那一行、只取符号名**之前**的那段文本，而且只有在确实存在强候选可
+  优先时才生效。漏判的代价是一次 Peek 列表，误判则会静默藏掉正确答案。
+- **廉价且自动刷新。** 每次解析只做几次 `existsSync`；解析结果按 mtime 和大小缓存，切换平台后重新跑
+  `bear -- make` 无需重载窗口即可生效。
 
 有三点是**选择**而不是巧合：
 
@@ -253,7 +290,7 @@ Definition provider 的「找不到」提示会明确指出这一点。
 |---|---|
 | `test/markdown.test.ts` | 行内/围栏提取、关键字与路径/URL 跳过、CommonMark 反引号规则、光标命中 |
 | `test/codegraph.test.ts` | 两处坐标/路径换算、类型映射、container 拆分、图谱发现、SDK 定位与加载、单根缓存 |
-| `test/resolution.test.ts` | 每个排序信号与矛盾信号、类型/限定符一致性、合并排序、管线错误隔离与取消、resolver 对 fixture 图谱的端到端 |
+| `test/resolution.test.ts` | 每个排序信号与矛盾信号、类型/限定符一致性、合并排序、管线错误隔离与取消、resolver 对 fixture 图谱的端到端、构建收窄（CDB 定位/无答案回退/强压弱/与上限的先后）及其数据库的解析与缓存 |
 | `test/activation.test.ts` | **真实 esbuild bundle** 跑在桩化 VS Code API 与临时项目上：provider/命令注册、跳转定义、Hover 来源、Hover 源码回退、带精确调用点的引用、**路径链接** |
 | `test/degradation.test.ts` | 没有索引、索引打不开、宏无法索引，以及这三种状态下路径链接照常工作 |
 | `test/architecture.test.ts` | 被强制的不变量：`core/` 以下不 import `vscode`、不使用 TypeScript 参数属性、CodeGraph 永不被静态 import、贡献/注册/读取的设置保持一致 |

@@ -72,6 +72,8 @@ src/
 ├── resolution/
 │   ├── Resolver.ts              SymbolResolver, ResolveContext, ResolutionResult, candidate
 │   ├── Ranking.ts               the evidence signals, and the reasons they produce
+│   ├── CompileCommands.ts       `compile_commands.json` discovery, parsing and cache (build signal)
+│   ├── WeakLinkage.ts           weak-linkage detection on a definition line (strong beats weak)
 │   ├── ResolverPipeline.ts      ordered run, per-resolver error isolation, merge
 │   └── CodegraphResolver.ts     the one engine
 ├── providers/                   Definition, Reference, Hover, DocumentLink providers
@@ -143,10 +145,53 @@ agreeing signals minus contradicting ones.
 | mention shape agrees with the kind | `+1` |
 | qualifier contradicts | `−1` |
 | language contradicts | `−1` |
+| the candidate's file is in the project's `compile_commands.json` | `+1` |
 
 A fully corroborated hit therefore ranks `4`; a bare `` `nx_start` `` with no fence ranks `1`.
 
-Three properties are choices rather than accidents:
+The last row is not a `rankCandidate` signal: a *mention* cannot agree or disagree with a build. It is
+added by `CodegraphResolver` while it assembles the candidates, from `resolution/CompileCommands.ts`, and
+it is the one signal that can take a candidate to `MAX_RANK + 1`.
+
+### Build narrowing
+
+**For C/C++ projects that have a `compile_commands.json`, the build database replaces the graph's list when
+it has an answer for the name.** A graph is a static view of a whole tree, so a NuttX-style ARCH hook
+(`up_allocate_heap`, one definition per chip) comes back as twenty equally-evidenced candidates ordered by
+`(file_path, start_line)` — a property of the code, not of the build — and a Peek list is a coin flip. A
+compilation database is the one artifact that knows which of those files the current build compiles
+(`bear -- make`, CMake, `ninja -t compdb`), and "which definition does *this* build use" is the only
+question a jump should answer. `narrowToBuild()` in `CodegraphResolver.ts` applies it in three steps:
+
+1. **C-family candidates in the build are kept, the rest of the C-family list is dropped.** The
+   alternatives are, by construction, not part of this build.
+2. **Another language is never dropped.** A build database is a C/C++ artifact and must not hide a Python or
+   Rust definition of one name; those candidates survive narrowing untouched.
+3. **A strong definition beats a weak one.** Both `up_allocate_heap` files can be translation units of the
+   same build, and then membership cannot separate them — but the linker can: NuttX's generic default is
+   declared `weak_function` and the chip's override is not. `WeakLinkage.ts` reads that marker from the
+   definition's own source line, which is the only place it exists in a graph built without a preprocessor
+   and without a link step.
+
+Narrowing runs **before** the `MAX_CANDIDATES` cap, so the definition a build compiles is found even when a
+name-ordered query would have pushed it past the cap.
+
+Four properties keep that narrowing honest:
+
+- **No answer means no narrowing.** A note legitimately mentions symbols the current `.config` does not
+  build (another board, `sim:nsh`, and the note is where the two are compared). When no candidate is in the
+  build, nothing is dropped and the full list comes back with its mention evidence — exactly as before.
+- **Failure is not an error.** No database, unreadable JSON, a database from another platform: no
+  narrowing, no signal. Discovery walks up from the Markdown file but never leaves the workspace, so a
+  `note/` symlink pointing elsewhere cannot pick up an unrelated build.
+- **Weak linkage is read conservatively.** Only the exact line the graph points at, only the text in front
+  of the symbol's own name, and only when a strong candidate exists to prefer. A miss costs a Peek list; a
+  false positive would hide the right answer.
+- **It is cheap and self-refreshing.** Discovery is a few `existsSync` calls per resolve; parsing is cached
+  and invalidated by mtime and size, so re-running `bear -- make` after a platform switch is picked up
+  without a window reload.
+
+Three further properties are choices rather than accidents:
 
 - **Contradictions subtract; they never reject.** `sameLanguageFamily` is false for every language outside
   its table, so a fence written ```` ```text ```` would otherwise look like a contradiction and silently
@@ -268,7 +313,7 @@ its configuration lives in the project's `codegraph.json` and `.codegraph/` dire
 |---|---|
 | `test/markdown.test.ts` | inline/fenced extraction, keyword and path/URL skipping, CommonMark backtick rules, cursor resolution |
 | `test/codegraph.test.ts` | the two coordinate/path conversions, kind mapping, container derivation, graph discovery, SDK lookup and loading, the per-root index cache |
-| `test/resolution.test.ts` | every ranking signal and contradiction, kinds/qualifier agreement, merge ordering, pipeline error isolation and cancellation, the resolver end to end over a fixture graph |
+| `test/resolution.test.ts` | every ranking signal and contradiction, kinds/qualifier agreement, merge ordering, pipeline error isolation and cancellation, the resolver end to end over a fixture graph, build narrowing (CDB lookup, no-answer fallback, strong-over-weak, cap interaction) and its database finder/parse/cache |
 | `test/activation.test.ts` | **the real esbuild bundle** on a stubbed VS Code API and a temporary project: provider/command registration, definition, hover provenance, hover source fallback, references with exact call sites, **path links** |
 | `test/degradation.test.ts` | no index, an unopenable index, a macro that cannot be indexed, and path links in all three states |
 | `test/architecture.test.ts` | the enforced invariants: nothing below `core/` imports `vscode`, no TypeScript parameter properties, CodeGraph is never statically imported, contributed/registered/read settings stay consistent |
