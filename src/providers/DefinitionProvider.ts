@@ -2,8 +2,8 @@
  * Go-to-definition for symbols inside Markdown code blocks and inline code.
  *
  * This is the capability that existed in `md-code-links`, now served by the
- * resolver pipeline: the index may answer instantly, clangd confirms when the
- * evidence is weak, and the user sees exactly what happened in the log.
+ * resolver pipeline: CodeGraph answers from its graph, and the user sees exactly
+ * what happened in the log.
  */
 
 import * as vscode from 'vscode';
@@ -29,9 +29,9 @@ export function createDefinitionProvider(codeport: CodePort): vscode.DefinitionP
 
       if (outcome.candidates.length === 0) {
         const detail = outcome.results.find((result) => result.error)?.error;
+        const hint = detail ? ` (${detail})` : await graphHint(codeport, document);
         void vscode.window.setStatusBarMessage(
-          `$(search) CodePort: no definition found for "${reference.name}"` +
-            (detail ? ` (${detail})` : indexHint(codeport, document)),
+          `$(search) CodePort: no definition found for "${reference.name}"${hint}`,
           5000
         );
         return undefined;
@@ -41,7 +41,7 @@ export function createDefinitionProvider(codeport: CodePort): vscode.DefinitionP
         const best = outcome.candidates[0]!;
         codeport.logger.trace(
           `definition: ${best.source} -> ${describeLocation(best.location)} ` +
-            `(${best.confidence.toFixed(2)}: ${best.reason ?? 'no reason'})`
+            `(rank ${best.rank}: ${best.reason ?? 'no reason'})`
         );
       }
       return outcome.candidates.map((candidate) => toVsLocation(candidate.location));
@@ -49,14 +49,15 @@ export function createDefinitionProvider(codeport: CodePort): vscode.DefinitionP
   };
 }
 
-/** Explain the two common reasons an indexed lookup can miss. */
-function indexHint(codeport: CodePort, document: vscode.TextDocument): string {
-  const config = codeport.getConfig();
-  if (!config.indexEnabled) return '';
+/** Explain the usual reason a lookup misses. */
+async function graphHint(codeport: CodePort, document: vscode.TextDocument): Promise<string> {
   const root = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
   if (!root) return '';
-  const stats = codeport.indexStats(root);
-  if (!stats) return ' — index not built yet, try again shortly';
-  if (stats.symbols === 0) return ' — index is empty (still building?)';
-  return '';
+  const summary = await codeport.graphSummary(root);
+  if (!summary) {
+    return ` — no CodeGraph index covers this folder; run "codegraph index ${root}"`;
+  }
+  // The overwhelmingly common miss with a healthy graph is a name CodeGraph does
+  // not model at all — preprocessor macros have no node kind.
+  return ' — not in the CodeGraph index (preprocessor macros are not indexed)';
 }

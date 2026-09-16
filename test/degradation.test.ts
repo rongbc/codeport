@@ -1,87 +1,119 @@
 /**
- * Degradation test: CodePort must stay useful with **neither a build system nor a
- * language server**.
+ * Degradation tests.
  *
- * This is a regression guard for a real defect. The index lifecycle used to be
- * gated on project detection (`compile_commands.json` / `.clangd`): with neither
- * marker present, `prewarm()` skipped the workspace entirely, so the index was
- * never populated and every lookup failed — even though the index needs no build
- * system at all. `compile_commands.json` is a requirement of *clangd*, not of the
- * CodePort index.
+ * CodePort is a navigation aid, so the interesting property is what it does when
+ * the thing it depends on is missing or broken: it must say so and return
+ * nothing, never throw into the editor and never guess a wrong location.
  *
- * The workspace here has no markers and `codeport.clangd.path` points at a file
- * that exists but cannot be executed, so the adapter cannot fall back to
- * auto-detection and the language server is genuinely unavailable on any machine.
+ * Three states are covered end to end against the real bundle:
+ *
+ *  1. no CodeGraph index anywhere near the workspace;
+ *  2. an index that exists but cannot be opened;
+ *  3. a healthy index asked for a name CodeGraph does not model (a macro).
+ *
+ * Path links are asserted in all of them: they are the half of the extension that
+ * never touched the symbol engine, so they must keep working unconditionally.
  */
 
-import { test, before, after } from 'node:test';
+import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { installVscodeStub } from './support/vscode-stub.ts';
+import { FAKE_SDK, node, tempDir } from './support/env.ts';
 
 const requireCjs = createRequire(import.meta.url);
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const BUNDLE = path.join(ROOT, 'dist', 'extension.js');
+const BROKEN_SDK = fileURLToPath(new URL('./fixtures/fake-codegraph-sdk-broken.js', import.meta.url));
 
-const SOURCE = `void nx_start(void) {
-}
+const SOURCE = `#define SCHED_ALL_CPUS 3
 
-int main(void) {
-    nx_start();
-    return 0;
+void nx_start(void) {
 }
 `;
 
-let workspace: string;
 let handle: ReturnType<typeof installVscodeStub>;
-let extension: { activate(context: unknown): unknown; deactivate(): Promise<void> };
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-const log = (): string => handle.stub.logLines.join('\n');
+const cleanups: Array<() => void | Promise<void>> = [];
 
 before(() => {
   assert.ok(fs.existsSync(BUNDLE), 'run `npm run build` first (npm test does it via pretest)');
+});
 
-  workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'codeport-degrade-'));
-  fs.writeFileSync(path.join(workspace, 'a.c'), SOURCE);
-  // Deliberately NO compile_commands.json and NO .clangd.
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
+  delete process.env.CODEGRAPH_SDK_PATH;
+});
 
-  const brokenBinary = path.join(workspace, 'broken-clangd');
-  fs.writeFileSync(brokenBinary, 'this is not a program\n');
+after(() => {
+  handle?.restore();
+});
 
+/** A workspace with sources, and optionally a graph of the given shape. */
+function makeWorkspace(options: { graph: 'healthy' | 'broken' | 'none'; sdk: string }): string {
+  const dir = tempDir('codeport-degradation-');
+  fs.writeFileSync(path.join(dir, 'a.c'), SOURCE);
+  fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'docs', 'notes.md'), 'Call `nx_start()` and `SCHED_ALL_CPUS`.\n');
+
+  if (options.graph !== 'none') {
+    fs.mkdirSync(path.join(dir, '.codegraph'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.codegraph', 'codegraph.db'), '');
+  }
+  if (options.graph === 'healthy') {
+    fs.writeFileSync(
+      path.join(dir, '.codegraph', 'fake-graph.json'),
+      JSON.stringify({
+        nodes: [
+          node({
+            id: 'fn:nx_start',
+            kind: 'function',
+            name: 'nx_start',
+            language: 'c',
+            filePath: 'a.c',
+            startLine: 3,
+            endLine: 4,
+            startColumn: 5,
+            endColumn: 1,
+            signature: 'void nx_start(void)',
+          }),
+          // Deliberately no node for SCHED_ALL_CPUS: CodeGraph has no macro kind.
+        ],
+        usages: {},
+      })
+    );
+  }
+
+  process.env.CODEGRAPH_SDK_PATH = options.sdk;
   handle = installVscodeStub({
-    workspaceRoot: workspace,
+    workspaceRoot: dir,
     extensionPath: ROOT,
-    settings: {
-      'codeport.trace': 'verbose',
-      'codeport.clangd.path': brokenBinary,
-    },
+    settings: { 'codeport.trace': 'verbose' },
   });
+  return dir;
+}
 
-  extension = requireCjs(BUNDLE) as typeof extension;
+/** Load and activate a fresh copy of the bundle (Node caches module state). */
+function activateFresh(workspace: string): void {
+  const resolved = requireCjs.resolve(BUNDLE);
+  delete requireCjs.cache[resolved];
+  const extension = requireCjs(BUNDLE) as { activate(context: unknown): unknown; deactivate(): Promise<void> };
   extension.activate({
     subscriptions: [],
     extensionPath: ROOT,
-    extension: { id: 'local.codeport' },
+    extension: { id: 'RongBaichuan.codeport' },
     globalState: { get: () => undefined, update: async () => {} },
   });
-});
-
-after(async () => {
-  try {
-    await extension?.deactivate();
-  } finally {
-    handle?.restore();
+  cleanups.push(async () => {
+    await extension.deactivate();
     fs.rmSync(workspace, { recursive: true, force: true });
-  }
-});
+  });
+}
 
-function fakeDocument(text: string): unknown {
-  const fsPath = path.join(workspace, 'n.md');
+function fakeDocument(workspace: string, text: string): any {
+  const fsPath = path.join(workspace, 'docs', 'notes.md');
   const lines = text.split('\n');
   return {
     uri: { fsPath, toString: () => `file://${fsPath}` },
@@ -100,90 +132,87 @@ function fakeDocument(text: string): unknown {
   };
 }
 
-const TOKEN = { isCancellationRequested: false };
+const token = { isCancellationRequested: false };
 
-test('the index is built from the workspace alone, with no build system', async () => {
-  const deadline = Date.now() + 20_000;
-  while (Date.now() < deadline && !/index synced/.test(log())) await sleep(50);
+function statusText(): string {
+  return handle.stub.statusMessages.map((entry) => entry.message).join('\n');
+}
 
-  assert.match(
-    log(),
-    /index synced: 1 indexed/,
-    `the index must be built without compile_commands.json; log: ${log()}`
-  );
-  assert.ok(
-    fs.existsSync(path.join(workspace, '.codeport', 'index.db')),
-    'the index database must exist'
-  );
-  // Project detection is expected to fail — that is the point of this test.
-  assert.doesNotMatch(log(), /\[project\].*-> clangd/, 'no project should be detected');
+test('with no index anywhere, a jump resolves to nothing and says why', async () => {
+  const workspace = makeWorkspace({ graph: 'none', sdk: BROKEN_SDK });
+  activateFresh(workspace);
+
+  const result = await handle.providers
+    .get('definition')
+    .provideDefinition(fakeDocument(workspace, 'Call `nx_start()`.\n'), { line: 0, character: 8 }, token);
+
+  assert.equal(result, undefined, 'no index must never produce a location');
+  const status = statusText();
+  assert.match(status, /no definition found/);
+  assert.match(status, /no CodeGraph index covers this folder/, `status: ${status}`);
+  assert.match(status, /codegraph index/, 'the hint must say how to fix it');
 });
 
-test('go-to-definition resolves through the index', async () => {
-  const provider = handle.providers.get('definition');
-  const result = await provider.provideDefinition(
-    fakeDocument('Call `nx_start()` to boot.\n'),
-    { line: 0, character: 8 },
-    TOKEN
-  );
+test('an unopenable index degrades instead of throwing into the editor', async () => {
+  const workspace = makeWorkspace({ graph: 'broken', sdk: BROKEN_SDK });
+  activateFresh(workspace);
 
-  assert.ok(result, `expected a definition from the index; log: ${log()}`);
-  assert.equal(result.length, 1);
-  assert.equal(result[0].uri.fsPath, path.join(workspace, 'a.c'));
-  assert.equal(result[0].range.start.line, 0);
+  const result = await handle.providers
+    .get('definition')
+    .provideDefinition(fakeDocument(workspace, 'Call `nx_start()`.\n'), { line: 0, character: 8 }, token);
+
+  assert.equal(result, undefined);
+  // The resolver was available (a `.codegraph` exists) and failed quietly: it
+  // reports an empty result rather than throwing, so the pipeline records no
+  // error and the editor sees a plain "not found".
+  assert.match(statusText(), /no definition found/);
+  assert.doesNotMatch(statusText(), /CodeGraph was not found/);
 });
 
-test('a weak mention escalates to the language server, fails, and still resolves', async () => {
-  // Without call parentheses the index only reaches 0.70, which is below the
-  // accept threshold, so the policy consults the language server. With clangd
-  // unavailable that resolver must fail softly and the index candidate must
-  // survive the merge.
-  const provider = handle.providers.get('definition');
-  const result = await provider.provideDefinition(
-    fakeDocument('The `nx_start` routine boots.\n'),
-    { line: 0, character: 8 },
-    TOKEN
-  );
+test('a healthy index answers, but a macro still resolves to nothing', async () => {
+  const workspace = makeWorkspace({ graph: 'healthy', sdk: FAKE_SDK });
+  activateFresh(workspace);
 
-  assert.ok(result, `the index candidate must survive an LSP failure; log: ${log()}`);
-  assert.equal(result[0].uri.fsPath, path.join(workspace, 'a.c'));
-  assert.match(
-    log(),
-    /resolved "nx_start" -> \d+ candidate\(s\)[^\n]*\[index=1, lsp=0\]/,
-    `expected the index to answer after the server produced nothing; log: ${log()}`
+  const definition = handle.providers.get('definition');
+  const found = await definition.provideDefinition(
+    fakeDocument(workspace, 'Call `nx_start()`.\n'),
+    { line: 0, character: 8 },
+    token
   );
+  assert.ok(found, 'a plain symbol must resolve');
+  assert.equal(found[0].range.start.line, 2, 'startLine 3 becomes line 2');
+
+  // The documented regression: CodeGraph has no macro node kind, so a
+  // `SOME_MACRO`-shaped mention cannot be answered by the index at all.
+  const macro = fakeDocument(workspace, 'Bitmask `SCHED_ALL_CPUS` is set.\n');
+  assert.equal(
+    await definition.provideDefinition(macro, { line: 0, character: 12 }, token),
+    undefined,
+    'macros are not indexed by CodeGraph'
+  );
+  assert.match(statusText(), /preprocessor macros are not indexed/, `status: ${statusText()}`);
 });
 
-test('hover still reports a signature, taken from the index', async () => {
-  const provider = handle.providers.get('hover');
-  const hover = await provider.provideHover(
-    fakeDocument('Call `nx_start()` to boot.\n'),
-    { line: 0, character: 8 },
-    TOKEN
-  );
+test('path links work in every degraded state', async () => {
+  for (const graph of ['none', 'broken', 'healthy'] as const) {
+    const workspace = makeWorkspace({ graph, sdk: graph === 'healthy' ? FAKE_SDK : BROKEN_SDK });
+    activateFresh(workspace);
 
-  assert.ok(hover, `hover must work without a language server; log: ${log()}`);
-  assert.match(
-    String(hover.contents.value),
-    /void nx_start\(void\)/,
-    'the signature must come from the index'
-  );
-  assert.match(String(hover.contents.value), /index · confidence/);
+    const links = await handle.providers
+      .get('documentLink')
+      .provideDocumentLinks(fakeDocument(workspace, 'See `a.c:3` for the boot path.\n'), token);
+
+    const targets = (links ?? []).filter((link: any) => link.target).map((link: any) => link.target.fsPath);
+    assert.ok(
+      targets.includes(path.join(workspace, 'a.c')),
+      `path links must survive graph=${graph}; got ${JSON.stringify(targets)}`
+    );
+  }
 });
 
-test('Find All References degrades honestly instead of guessing', async () => {
-  // Reference search needs a server at a real definition position. With no build
-  // configuration there is no server, so CodePort must report nothing rather than
-  // returning its own candidates as if they were references.
-  const provider = handle.providers.get('reference');
-  const result = await provider.provideReferences(
-    fakeDocument('Call `nx_start()` to boot.\n'),
-    { line: 0, character: 8 },
-    { includeDeclaration: true },
-    TOKEN
-  );
-
-  assert.equal(result, undefined, 'no references must be reported without a server');
-  const status = handle.stub.statusMessages.map((entry) => entry.message).join('\n');
-  assert.match(status, /no references found/i, `expected an honest status message; got: ${status}`);
+test('activation itself never fails when CodeGraph is unusable', () => {
+  const workspace = makeWorkspace({ graph: 'none', sdk: BROKEN_SDK });
+  activateFresh(workspace);
+  assert.ok(handle.providers.has('definition'));
+  assert.ok(handle.providers.has('documentLink'));
 });

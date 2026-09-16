@@ -68,8 +68,13 @@ export const SYMBOL_KINDS: readonly SymbolKind[] = [
   'unknown',
 ];
 
-/** A symbol as described by an index row or a language server. */
+/** A symbol as described by the symbol engine (CodeGraph). */
 export interface ResolvedSymbol {
+  /**
+   * Opaque backend id. CodePort keeps it so follow-up queries (references, the
+   * symbol's own source) need no second name lookup.
+   */
+  readonly id?: string;
   readonly name: string;
   readonly qualifiedName?: string;
   readonly kind?: SymbolKind;
@@ -100,16 +105,6 @@ export interface SymbolReference {
   readonly codeRange: Range;
   /** True when the mention lives in an inline code span (vs a fenced block). */
   readonly inline: boolean;
-}
-
-/** What a layer decided about the language/project a reference belongs to. */
-export interface ResolvedTarget {
-  readonly language: string;
-  readonly adapterId: string;
-  /** Absolute project root, when a project was detected. */
-  readonly projectRoot?: string;
-  /** Which of the three detection levels produced this answer. */
-  readonly source: 'fence' | 'workspace' | 'fallback';
 }
 
 /** Convenience: convert a `Range` into a comparable key. */

@@ -1,71 +1,51 @@
 /**
  * `CodePort` — the facade the VS Code layer talks to.
  *
- * Owns the adapter registry, project/language detection, the index service, the
- * language-server pool and the resolver pipeline, and rebuilds the pipeline
- * whenever the policy changes.
+ * Owns the CodeGraph index service, the resolver pipeline and the Markdown parse
+ * cache, and rebuilds the engines whenever the configuration changes.
  *
  * The dependency direction is one-way and deliberate:
  *
- *   providers -> CodePort -> pipeline -> resolvers -> adapters -> LSP
- *                                      \-> index
+ *   providers -> CodePort -> pipeline -> CodegraphResolver -> CodeGraph
  *
  * Nothing below `CodePort` imports `vscode`, which is what keeps the interesting
- * parts unit-testable.
+ * parts unit-testable. Note where the project root comes from: CodePort used to
+ * run a project detector to decide which language server to start. CodeGraph owns
+ * that question now — it finds its own graph by walking up from a file — so the
+ * workspace folder is all that is left to look up.
  */
 
 import * as vscode from 'vscode';
 import path from 'node:path';
-import { createAdapterRegistry, createBuiltInAdapters } from '../adapters/index.ts';
-import type { AdapterRegistry } from '../adapters/AdapterRegistry.ts';
-import { LspClientPool } from '../lsp/LspClientPool.ts';
-import { IndexResolver } from '../resolution/IndexResolver.ts';
-import { LspResolver, type LspTarget } from '../resolution/LspResolver.ts';
+import { CodegraphIndexService, type CodegraphIndex } from '../codegraph/CodegraphIndex.ts';
+import { findGraphRoot, type CodegraphStats } from '../codegraph/sdk.ts';
+import { CodegraphResolver } from '../resolution/CodegraphResolver.ts';
 import { ResolverPipeline } from '../resolution/ResolverPipeline.ts';
-import { createPolicy } from '../resolution/Policy.ts';
 import { MarkdownParserCache, symbolAt, type ParsedMarkdown } from '../markdown/MarkdownParser.ts';
-import { readConfig, offerLegacyMigration, type CodePortConfig } from '../config.ts';
+import { readConfig, type CodePortConfig } from '../config.ts';
 import { Logger } from '../logger.ts';
-import { ProjectManager } from './ProjectManager.ts';
-import { LanguageManager } from './LanguageManager.ts';
-import { IndexService } from './IndexService.ts';
-import { CONFIG_SECTION, INDEX_DIR_NAME } from '../constants.ts';
+import { CONFIG_SECTION } from '../constants.ts';
 import type { ResolveContext, ResolutionOutcome } from '../resolution/Resolver.ts';
 import type { Location, SymbolReference } from '../types.ts';
-import type { IndexStats } from '../index/IndexStore.ts';
-import type { IndexRunStats } from '../index/Indexer.ts';
-import { tryUriToPath } from '../util/uri.ts';
+import { pathToUri, tryUriToPath } from '../util/uri.ts';
 import { fromVsPosition } from '../vscode/convert.ts';
 
-/** Settings that invalidate the index or the language-server configuration. */
-const ADAPTER_AFFECTING_SETTINGS = [
-  'clangd.path',
-  'clangd.arguments',
-  'clangd.compileCommandsDir',
-  'languages',
-];
+/** A CodeGraph index found for a workspace, with its statistics. */
+export interface GraphSummary extends CodegraphStats {
+  readonly root: string;
+}
 
-const INDEX_AFFECTING_SETTINGS = [
-  'index.enabled',
-  'index.exclude',
-  'index.maxFileSize',
-  'index.references',
-];
+/** How many resolved definitions `Find All References` expands. */
+const MAX_REFERENCE_TARGETS = 5;
 
 export class CodePort {
   readonly logger: Logger;
 
   private readonly context: vscode.ExtensionContext;
-  private readonly adapterRegistry: AdapterRegistry;
-  private readonly projects: ProjectManager;
-  private readonly languages: LanguageManager;
-  private readonly indexes: IndexService;
-  private readonly pool: LspClientPool;
-  private readonly indexResolver: IndexResolver;
-  private readonly lspResolver: LspResolver;
   private readonly parserCache = new MarkdownParserCache();
   private readonly disposables: vscode.Disposable[] = [];
 
+  private graphs: CodegraphIndexService;
   private pipeline: ResolverPipeline;
   private configCache: CodePortConfig | undefined;
 
@@ -77,58 +57,36 @@ export class CodePort {
     this.logger.setLevel(config.trace);
     this.logger.section(`CodePort ${context.extension.id} activated`);
 
-    this.adapterRegistry = createAdapterRegistry({
-      clangd: {
-        binaryPath: config.clangdPath,
-        extraArguments: config.clangdArguments,
-        compileCommandsDir: config.clangdCompileCommandsDir,
-      },
-    });
-
-    this.projects = new ProjectManager({ registry: this.adapterRegistry, logger: this.logger });
-    this.languages = new LanguageManager({
-      registry: this.adapterRegistry,
-      projects: this.projects,
-      getConfig: () => this.getConfig(),
-      logger: this.logger,
-    });
-    this.indexes = new IndexService({
-      wasmDir: this.wasmDirectory(),
-      getConfig: () => this.getConfig(),
-      logger: this.logger,
-    });
-
-    this.pool = new LspClientPool(this.logger);
-    this.lspResolver = new LspResolver({
-      pool: this.pool,
-      targets: this.languages,
-      logger: this.logger,
-    });
-    this.indexResolver = new IndexResolver({
-      lookup: (workspaceRoot) => this.indexes.getIndex(workspaceRoot),
-      logger: this.logger,
-    });
-
+    this.graphs = this.createIndexService();
     this.pipeline = this.createPipeline();
   }
 
-  /** Register workspace listeners and warm up the engines. */
+  /** Register workspace listeners. */
   initialize(): void {
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration(CONFIG_SECTION)) this.onConfigurationChanged(event);
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
-        this.projects.invalidate();
-        this.logger.trace('workspace folders changed; project cache cleared');
+        this.graphs.closeAll();
+        this.logger.trace('workspace folders changed; open graphs closed');
       }),
       vscode.workspace.onDidCloseTextDocument((document) => {
         this.parserCache.invalidate(document.uri.toString());
       })
     );
 
-    void offerLegacyMigration(this.context);
-    this.prewarm();
+    void this.logEngineStatus();
+  }
+
+  private async logEngineStatus(): Promise<void> {
+    const languages = await this.supportedLanguages();
+    this.logger.info(
+      languages.length > 0
+        ? `CodeGraph ready for ${languages.length} language(s); resolver=${this.pipeline.resolverIds().join(',')}`
+        : 'CodeGraph was not found; install it (npm i -g @colbymchenry/codegraph) ' +
+            'or point codeport.codegraph.path at it'
+    );
   }
 
   /* ------------------------------ config ------------------------------ */
@@ -138,47 +96,43 @@ export class CodePort {
     return this.configCache;
   }
 
-  /** Directory holding the tree-sitter WASM assets shipped in the extension. */
-  private wasmDirectory(): string {
-    return path.join(this.context.extensionPath, 'dist', 'wasm');
+  private createIndexService(): CodegraphIndexService {
+    const config = this.getConfig();
+    return new CodegraphIndexService({
+      sdk: {
+        configuredPath: config.codegraphPath || undefined,
+        extensionPath: this.context.extensionPath,
+      },
+    });
   }
 
   private createPipeline(): ResolverPipeline {
-    const config = this.getConfig();
-    return new ResolverPipeline([this.indexResolver, this.lspResolver], {
-      policy: createPolicy(config.policy, {
-        indexAcceptConfidence: config.indexAcceptConfidence,
-      }),
-      logger: this.logger,
-    });
+    const graphs = this.graphs;
+    return new ResolverPipeline(
+      [
+        new CodegraphResolver({
+          lookup: (root) => graphs.lookup(root),
+          open: (root) => graphs.open(root),
+          logger: this.logger,
+        }),
+      ],
+      { logger: this.logger }
+    );
   }
 
   private onConfigurationChanged(event: vscode.ConfigurationChangeEvent): void {
     this.configCache = undefined;
     const config = this.getConfig();
-
     this.logger.setLevel(config.trace);
+
+    // A new `codegraph.path` invalidates every open graph: they were opened
+    // through the previous SDK.
+    if (event.affectsConfiguration(`${CONFIG_SECTION}.codegraph.path`)) {
+      this.graphs.closeAll();
+      this.graphs = this.createIndexService();
+      this.logger.info('codegraph.path changed; open graphs closed');
+    }
     this.pipeline = this.createPipeline();
-    this.projects.invalidate();
-
-    if (ADAPTER_AFFECTING_SETTINGS.some((key) => event.affectsConfiguration(`${CONFIG_SECTION}.${key}`))) {
-      const adapters = createBuiltInAdapters({
-        clangd: {
-          binaryPath: config.clangdPath,
-          extraArguments: config.clangdArguments,
-          compileCommandsDir: config.clangdCompileCommandsDir,
-        },
-      });
-      for (const adapter of adapters) this.adapterRegistry.register(adapter);
-      // Existing servers were started with the previous command line.
-      void this.pool.disposeAll();
-      this.logger.info('adapter configuration changed; language servers restarted on next use');
-    }
-
-    if (INDEX_AFFECTING_SETTINGS.some((key) => event.affectsConfiguration(`${CONFIG_SECTION}.${key}`))) {
-      this.indexes.reset();
-      this.logger.info(`index configuration changed; index reset for ${INDEX_DIR_NAME}`);
-    }
   }
 
   /* --------------------------- document access --------------------------- */
@@ -203,30 +157,13 @@ export class CodePort {
     document: vscode.TextDocument,
     token?: vscode.CancellationToken
   ): Promise<ResolutionOutcome> {
-    const config = this.getConfig();
     const documentUri = document.uri.toString();
-    const documentPath = tryUriToPath(documentUri);
-    const workspaceRoot =
-      this.projects.workspaceRootFor(document.uri) ??
-      (documentPath ? this.projects.workspaceRootForPath(documentPath) : undefined);
-
-    const target = this.languages.describeTarget(reference.language, documentUri);
-
-    // Make sure the index exists *and* gets populated. Creating it is not enough:
-    // an unsynced index is empty, so the first request would find nothing. This
-    // also covers `index.prewarm = false`, where the build starts on first use
-    // instead of at activation. Both calls are idempotent.
-    if (workspaceRoot && config.indexEnabled && config.policy !== 'lsp-only') {
-      await this.indexes.ensureIndex(workspaceRoot);
-      void this.indexes.startInBackground(workspaceRoot);
-    }
-
     const context: ResolveContext = {
       reference,
       documentUri,
       position: reference.range.start,
-      language: target?.language ?? reference.language,
-      workspaceRoot,
+      language: reference.language,
+      workspaceRoot: vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath,
       isCancelled: token ? () => token.isCancellationRequested : undefined,
     };
 
@@ -236,94 +173,109 @@ export class CodePort {
     return this.pipeline.resolve(context);
   }
 
-  /** Adapter/project pair owning a resolved source location. */
-  targetForLocation(location: Location): LspTarget | undefined {
-    const filePath = tryUriToPath(location.uri);
-    if (!filePath) return undefined;
-    return this.languages.targetForFile(filePath);
-  }
-
-  /** `textDocument/references` at a real source location. */
-  findReferences(
-    target: LspTarget,
+  /**
+   * Reference sites of a resolved symbol.
+   *
+   * CodeGraph's edges carry the exact line and column of each usage plus the
+   * referenced name, so this is a faithful stand-in for the language server's
+   * `textDocument/references` — at the cost of being a static, name-resolved call
+   * graph rather than a semantic one.
+   */
+  async referencesFor(
     location: Location,
+    symbolId: string | undefined,
     includeDeclaration: boolean
   ): Promise<Location[]> {
-    return this.lspResolver.referencesAt(target, location, includeDeclaration);
-  }
+    if (!symbolId) return [];
+    const resolved = await this.withIndexFor(location, (index) => index.usages(symbolId));
+    if (!resolved) return [];
 
-  /** Hover text from the language server at a real source location. */
-  fetchServerHover(target: LspTarget, location: Location): Promise<string | undefined> {
-    return this.lspResolver.hoverAt(target, location);
-  }
-
-  /** Adapter/project pairs for a whole workspace (used for pre-warming). */
-  targetsForWorkspace(workspaceRoot: string): LspTarget[] {
-    return this.languages.targetsForWorkspace(workspaceRoot);
-  }
-
-  /* -------------------------------- index -------------------------------- */
-
-  indexStats(workspaceRoot: string): IndexStats | undefined {
-    return this.indexes.getIndex(workspaceRoot)?.stats();
-  }
-
-  async rebuildIndex(workspaceRoot?: string): Promise<IndexRunStats | undefined> {
-    const root = workspaceRoot ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!root) {
-      void vscode.window.showInformationMessage('CodePort: open a folder to index.');
-      return undefined;
+    const found: Location[] = includeDeclaration ? [location] : [];
+    for (const usage of resolved.value) {
+      const site = usage.edge;
+      if (typeof site.line !== 'number') continue;
+      const line = Math.max(0, site.line - 1);
+      const column = Math.max(0, site.column ?? 0);
+      const name = site.metadata?.['refName'];
+      const width = typeof name === 'string' && name.length > 0 ? name.length : 0;
+      found.push({
+        uri: pathToUri(resolveNodeFile(resolved.root, usage.node.filePath)),
+        range: {
+          start: { line, character: column },
+          end: { line, character: column + width },
+        },
+      });
     }
-    return this.indexes.rebuild(root);
+    return found;
+  }
+
+  /**
+   * The symbol's own source text.
+   *
+   * Used by the hover when CodeGraph reported no `signature`, which is the one
+   * case where a snippet beats metadata.
+   */
+  async symbolSource(location: Location, symbolId: string | undefined): Promise<string | undefined> {
+    if (!symbolId) return undefined;
+    const resolved = await this.withIndexFor(location, (index) => index.code(symbolId));
+    return resolved?.value;
+  }
+
+  /** How many definitions to walk for one `Find All References`. */
+  referenceTargetLimit(): number {
+    return MAX_REFERENCE_TARGETS;
+  }
+
+  /** Languages the installed CodeGraph can parse. */
+  async supportedLanguages(): Promise<readonly string[]> {
+    return this.graphs.supportedLanguages();
+  }
+
+  /* ------------------------------ graph info ------------------------------ */
+
+  /** Statistics for the CodeGraph index governing `workspaceRoot`, if any. */
+  async graphSummary(workspaceRoot: string): Promise<GraphSummary | undefined> {
+    const root = findGraphRoot(workspaceRoot);
+    if (!root) return undefined;
+    const index = await this.graphs.open(root);
+    const stats = index?.stats();
+    if (!stats) return undefined;
+    return { root, ...stats };
   }
 
   /* ------------------------------ lifecycle ------------------------------ */
 
-  private prewarm(): void {
-    const config = this.getConfig();
-    if (!config.enabled || !config.indexPrewarm) return;
-
-    for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      const root = folder.uri.fsPath;
-
-      // The index is workspace-based: it needs no build system and no compiler.
-      // Gating it on project detection (a `compile_commands.json`/`.clangd`) would
-      // needlessly disable indexing in projects CodePort could still navigate.
-      if (config.indexEnabled) void this.indexes.startInBackground(root);
-
-      // A language server, by contrast, is useless without a build configuration.
-      const projects = this.projects.projectsInWorkspace(root);
-      if (projects.length === 0) continue;
-
-      this.logger.info(
-        `project detected in ${root} (${projects.map((project) => `${project.adapterId}:${project.markers.join('+')}`).join(', ')})`
-      );
-      if (config.policy !== 'index-only') void this.prewarmLanguageServers(root);
-    }
-  }
-
-  private async prewarmLanguageServers(workspaceRoot: string): Promise<void> {
-    for (const target of this.targetsForWorkspace(workspaceRoot)) {
-      try {
-        await this.lspResolver.clientFor(target);
-        this.logger.info(
-          `language server ready: ${target.adapter.id} @ ${target.project.root}`
-        );
-      } catch (error) {
-        this.logger.warn(
-          `could not start ${target.adapter.id} for ${target.project.root}: ${(error as Error).message}`
-        );
-      }
-    }
-  }
-
   async dispose(): Promise<void> {
     for (const disposable of this.disposables) disposable.dispose();
     this.disposables.length = 0;
-    this.indexes.dispose();
+    this.graphs.closeAll();
     this.parserCache.clear();
-    await this.pool.disposeAll();
     this.logger.info('CodePort deactivated');
     this.logger.dispose();
   }
+
+  /**
+   * Run `use` against the graph that owns `location`, opening it if needed.
+   *
+   * The graph root is derived from the *resolved file*, not from the workspace:
+   * a mention in one folder can legitimately resolve into a graph that lives
+   * above a different one.
+   */
+  private async withIndexFor<T>(
+    location: Location,
+    use: (index: CodegraphIndex) => T
+  ): Promise<{ readonly root: string; readonly value: T } | undefined> {
+    const filePath = tryUriToPath(location.uri);
+    if (!filePath) return undefined;
+    const root = findGraphRoot(path.dirname(filePath));
+    if (!root) return undefined;
+    const index = await this.graphs.open(root);
+    if (!index) return undefined;
+    return { root, value: use(index) };
+  }
+}
+
+/** CodeGraph stores file paths relative to the project root. */
+function resolveNodeFile(root: string, filePath: string): string {
+  return path.isAbsolute(filePath) ? filePath : path.resolve(root, filePath);
 }

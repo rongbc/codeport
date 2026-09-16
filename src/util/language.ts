@@ -41,7 +41,7 @@ export function sameLanguage(a: string | undefined, b: string | undefined): bool
 
 /**
  * Language families: dialects that share a grammar, a language server and a
- * symbol namespace. Used for confidence scoring, where comparing a *project*
+ * symbol namespace. Used for candidate ranking, where comparing a *project*
  * language (`cpp`, the adapter's default for a build) against a *file* dialect
  * (`c`) must not look like a contradiction.
  */

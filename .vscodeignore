@@ -1,5 +1,6 @@
 # Sources, tooling and tests are not shipped. `dist/` is not excluded, so the
-# built bundle and its tree-sitter WASM assets are packaged as-is.
+# built bundle is packaged as-is. There are no runtime assets any more: CodeGraph
+# ships and loads its own parsers.
 src/**
 test/**
 scripts/**
@@ -11,10 +12,9 @@ tsconfig.json
 package-lock.json
 .gitignore
 
-# The local index is a per-workspace cache. `.gitignore` covers it for git, but
-# `vsce` packages according to *this* file, so it must be listed here too or a
-# stale index database ships inside the .vsix.
-.codeport/**
+# CodeGraph keeps its index in the workspace, not in the package, but a stale one
+# must never ship if someone builds from inside an indexed folder.
+.codegraph/**
 
 **/*.vsix
 **/*.log

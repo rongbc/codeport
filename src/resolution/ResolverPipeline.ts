@@ -1,21 +1,22 @@
 /**
- * The resolution pipeline (plan section 3).
+ * The resolution pipeline.
  *
- * Runs the permitted resolvers in policy order, stops as soon as the policy is
- * satisfied, and merges whatever came back. A resolver that throws degrades to a
- * recorded error instead of failing the user's jump: if the index is broken but
- * clangd works, navigation still works.
+ * It runs the configured resolvers in order, isolates failures, and merges
+ * whatever came back. CodePort now has a single engine (CodeGraph), so the loop
+ * usually runs once — but the seam is kept deliberately: adding a second opinion
+ * later means writing one resolver, not touching the providers.
+ *
+ * A resolver that throws degrades to a recorded error instead of failing the
+ * user's jump.
  */
 
 import type {
+  ResolutionCandidate,
   ResolutionOutcome,
   ResolutionResult,
   ResolveContext,
   SymbolResolver,
 } from './Resolver.ts';
-import type { ResolutionPolicy } from './Policy.ts';
-import { clamp01 } from './Confidence.ts';
-import { mergeCandidates } from './Policy.ts';
 
 export interface PipelineLogger {
   info(message: string): void;
@@ -24,31 +25,28 @@ export interface PipelineLogger {
 }
 
 export interface ResolverPipelineOptions {
-  readonly policy: ResolutionPolicy;
   readonly logger?: PipelineLogger;
 }
 
 export class ResolverPipeline {
   private readonly resolvers: readonly SymbolResolver[];
-  readonly policy: ResolutionPolicy;
   private readonly logger: PipelineLogger;
 
-  constructor(resolvers: readonly SymbolResolver[], options: ResolverPipelineOptions) {
+  constructor(resolvers: readonly SymbolResolver[], options: ResolverPipelineOptions = {}) {
     this.resolvers = resolvers;
-    this.policy = options.policy;
     this.logger = options.logger ?? { info() {}, warn() {} };
   }
 
-  /** Resolver ids this pipeline may use, in policy order. */
+  /** Resolver ids this pipeline may use, in order. */
   resolverIds(): string[] {
-    return this.policy.order(this.resolvers).map((resolver) => resolver.id);
+    return this.resolvers.map((resolver) => resolver.id);
   }
 
   async resolve(context: ResolveContext): Promise<ResolutionOutcome> {
     const started = Date.now();
     const results: ResolutionResult[] = [];
 
-    for (const resolver of this.policy.order(this.resolvers)) {
+    for (const resolver of this.resolvers) {
       if (context.isCancelled?.()) break;
 
       if (!isUsable(resolver, context)) {
@@ -62,20 +60,18 @@ export class ResolverPipeline {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.warn(`[pipeline] ${resolver.id} failed: ${message}`);
-        result = { resolver: resolver.id, candidates: [], confidence: 0, durationMs: 0, error: message };
+        result = { resolver: resolver.id, candidates: [], durationMs: 0, error: message };
       }
 
       results.push(result);
       this.logger.trace?.(
         `[pipeline] ${resolver.id}: ${result.candidates.length} candidate(s), ` +
-          `confidence ${result.confidence.toFixed(2)}, ${result.durationMs} ms` +
+          `${result.durationMs} ms` +
           (result.error ? ` (error: ${result.error})` : '')
       );
-
-      if (this.policy.shouldStop(result, results, context)) break;
     }
 
-    const candidates = this.policy.merge(results, context);
+    const candidates = mergeCandidates(results, context);
     const outcome: ResolutionOutcome = {
       candidates,
       results,
@@ -83,7 +79,7 @@ export class ResolverPipeline {
     };
 
     this.logger.info(
-      `[pipeline/${this.policy.id}] resolved "${context.reference.raw}" -> ` +
+      `[pipeline] resolved "${context.reference.raw}" -> ` +
         `${candidates.length} candidate(s) in ${outcome.durationMs} ms ` +
         `[${results.map((r) => `${r.resolver}=${r.candidates.length}`).join(', ') || 'no resolver ran'}]`
     );
@@ -99,7 +95,41 @@ function isUsable(resolver: SymbolResolver, context: ResolveContext): boolean {
   }
 }
 
-/** Best confidence across an outcome; 0 when nothing was found. */
-export function bestConfidence(outcome: ResolutionOutcome): number {
-  return outcome.candidates.reduce((best, candidate) => Math.max(best, candidate.confidence), clamp01(0));
+/**
+ * Merge candidates from every resolver.
+ *
+ * De-duplication is by location, keeping the higher rank, and the result is
+ * ranked descending with a deterministic tie-break (file, then position) so the
+ * same query always produces the same order.
+ */
+export function mergeCandidates(
+  results: readonly ResolutionResult[],
+  _context?: ResolveContext
+): ResolutionCandidate[] {
+  const byLocation = new Map<string, ResolutionCandidate>();
+
+  for (const result of results) {
+    for (const candidate of result.candidates) {
+      const { uri, range } = candidate.location;
+      const key = `${uri}:${range.start.line}:${range.start.character}`;
+      const existing = byLocation.get(key);
+      if (!existing || candidate.rank > existing.rank) {
+        byLocation.set(key, candidate);
+      }
+    }
+  }
+
+  return [...byLocation.values()].sort((a, b) => {
+    if (b.rank !== a.rank) return b.rank - a.rank;
+    if (a.location.uri !== b.location.uri) return a.location.uri < b.location.uri ? -1 : 1;
+    if (a.location.range.start.line !== b.location.range.start.line) {
+      return a.location.range.start.line - b.location.range.start.line;
+    }
+    return a.location.range.start.character - b.location.range.start.character;
+  });
+}
+
+/** Best rank across an outcome; the number of evidence signals on the top hit. */
+export function bestRank(outcome: ResolutionOutcome): number {
+  return outcome.candidates.reduce((best, candidate) => Math.max(best, candidate.rank), 0);
 }

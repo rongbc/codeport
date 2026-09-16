@@ -2,7 +2,7 @@
  * Architecture invariants.
  *
  * The layering claim in docs/ARCHITECTURE.md — "nothing below `core/` imports
- * `vscode`" — is what makes 68 tests possible without a GUI. An unenforced claim
+ * `vscode`" — is what makes the suite possible without a GUI. An unenforced claim
  * rots, so it is checked here instead.
  */
 
@@ -67,27 +67,22 @@ test('the whole source tree is free of TypeScript parameter properties', () => {
   assert.deepEqual(violations, [], `parameter properties found in: ${violations.join(', ')}`);
 });
 
-test('every shipped adapter declares the pieces the core requires', async () => {
-  const { createBuiltInAdapters } = await import('../src/adapters/index.ts');
-  const adapters = createBuiltInAdapters({});
-  assert.ok(adapters.length >= 1, 'at least one adapter must ship');
-
-  for (const adapter of adapters) {
-    assert.ok(adapter.id, 'an adapter needs an id');
-    assert.ok(adapter.languages.length > 0, `${adapter.id} must declare languages`);
-    assert.ok(adapter.detector, `${adapter.id} must declare a project detector`);
-    assert.equal(typeof adapter.serverSpec, 'function');
-    assert.equal(typeof adapter.seedFiles, 'function');
+test('the extension never statically imports CodeGraph', () => {
+  // CodeGraph is an external tool, like clangd was: the per-platform bundle is
+  // ~123 MB, so it must never be pulled into the .vsix. It is reached only
+  // through the computed dynamic `import()` in src/codegraph/sdk.ts, which
+  // esbuild leaves alone.
+  const violations: string[] = [];
+  for (const file of sourceFiles(SRC)) {
+    const relative = path.relative(SRC, file).split(path.sep).join('/');
+    if (relative === 'codegraph/sdk.ts') continue;
+    const text = fs.readFileSync(file, 'utf8');
+    const staticImport =
+      /^\s*import\s+(?!type\s)[^;]*from\s+['"]@colbymchenry\/codegraph['"]/m.test(text) ||
+      /\brequire\(\s*['"]@colbymchenry\/codegraph['"]\s*\)/.test(text);
+    if (staticImport) violations.push(relative);
   }
-});
-
-test('every policy id in the settings enum is implemented', async () => {
-  const { POLICY_IDS } = await import('../src/resolution/Policy.ts');
-  const packageJson = JSON.parse(
-    fs.readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')
-  );
-  const declared: string[] = packageJson.contributes.configuration.properties['codeport.policy'].enum;
-  assert.deepEqual([...declared].sort(), [...POLICY_IDS].sort());
+  assert.deepEqual(violations, [], `CodeGraph must stay external: ${violations.join(', ')}`);
 });
 
 test('every command contributed in package.json is registered by the extension', () => {
@@ -124,17 +119,17 @@ test('every registered command is contributed in package.json', () => {
   assert.deepEqual(extra, [], `registered but not contributed: ${extra.join(', ')}`);
 });
 
-test('the local index caches are excluded from the package', () => {
+test('the CodeGraph index caches are excluded from the package', () => {
   // `.gitignore` and `.vscodeignore` are separate mechanisms: a directory ignored
   // by git is still packaged unless `.vscodeignore` excludes it too. That mistake
-  // would ship a stale `.codeport/index.db` inside the .vsix.
+  // would ship a stale index database inside the .vsix.
   const ignore = fs.readFileSync(fileURLToPath(new URL('../.vscodeignore', import.meta.url)), 'utf8');
   const gitignore = fs.readFileSync(fileURLToPath(new URL('../.gitignore', import.meta.url)), 'utf8');
   for (const [name, text] of [
     ['.vscodeignore', ignore],
     ['.gitignore', gitignore],
   ] as const) {
-    assert.match(text, /^\.codeport\/\*\*|^\.codeport\/$/m, `${name} must ignore the .codeport index cache`);
+    assert.match(text, /^\.codegraph\/\*\*|^\.codegraph\/$/m, `${name} must ignore the .codegraph index cache`);
   }
 });
 

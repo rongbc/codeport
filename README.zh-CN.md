@@ -6,41 +6,41 @@
   <img src="media/codeport_logo.png" alt="CodePort" width="128" />
 </p>
 
-![VS Code](https://img.shields.io/badge/VS%20Code-1.90%2B-blue) ![License](https://img.shields.io/badge/license-MIT-blue) ![Engines](https://img.shields.io/badge/engines-local%20index%20%2B%20language%20server-orange) ![C%2FC%2B%2B](https://img.shields.io/badge/C%2FC%2B%2B-clangd-brightgreen)
+![VS Code](https://img.shields.io/badge/VS%20Code-1.90%2B-blue) ![License](https://img.shields.io/badge/license-MIT-blue) ![Engine](https://img.shields.io/badge/engine-CodeGraph-orange) ![Languages](https://img.shields.io/badge/languages-any%20CodeGraph%20parses-brightgreen)
 
-**把光标放在 Markdown 里写下的符号上，就能直接跳到它的源码。** CodePort 把「跳转定义、Peek 定义、查找所有引用、Hover、可点击的 `path/file.c:42` 链接」带进笔记里的围栏代码块与行内代码 —— 底层是你项目真正的 Language Server，并由本地索引加速。
+**把光标放在 Markdown 里写下的符号上，就能直接跳到它的源码。** CodePort 把「跳转定义、Peek 定义、查找所有引用、Hover、可点击的 `path/file.c:42` 链接」带进笔记里的围栏代码块与行内代码 —— 底层是 [CodeGraph](https://github.com/colbymchenry/codegraph) 代码图谱。
 
-- **在标识符上按 F12 / Ctrl+Click**（围栏代码块或行内代码内），得到与在 `.c` 文件里完全一致的定义跳转；同名多定义同样弹出 Peek 列表。
-- **常见情况瞬时完成、且可离线。** 本地 tree-sitter + SQLite 索引以毫秒级回答无歧义的引用；只有当证据不足时才去问 Language Server。是哪个引擎作答、置信度多少、依据是什么，都写在 Hover 和日志里。
-- **查找所有引用**、**带来源依据的 Hover**、可点击的 `` `src/main.c:42` `` 路径链接，以及**插入源码链接**——把 `` `nx_start()` `` 变成 `[nx_start()](../sched/init/nx_start.c#L123)`。
-- **优先支持 C/C++**（通过 clangd）；Rust、Go、TypeScript、Python 的适配器接口已就绪。
-- 功能请求与 bug 欢迎提到 [Issues](https://github.com/rongbc/codeport/issues)。
+- **围栏代码块或行内代码里的标识符，F12 / Ctrl+Click** 即可跳到定义；同名多定义时给出与在源码文件里一致的 Peek 列表。
+- **单引擎，不需要 Language Server。** 跳转不再依赖 clangd 或任何 server，而是进程内直读 CodeGraph 索引 —— 没有 daemon、没有 IPC、查询亚毫秒。
+- **CodeGraph 能解析的语言都能用**，不再是只有 C/C++；每种语言都无需配置。
+- **查找所有引用**、**带来源标注的 Hover**、可点击的 `` `src/main.c:42` `` 路径链接，以及把 `` `nx_start()` `` 变成 `[nx_start()](../sched/init/nx_start.c#L123)` 的 **插入源码链接**。
+- 欢迎在 [Issues](https://github.com/rongbc/codeport/issues) 提需求与报 bug。
 
 <br/>
 
-## 特性⚡
+## 功能 ⚡
 
-### 在 Markdown 内跳转定义 ⭐
+### 在 Markdown 里跳转定义 ⭐
 
-在**围栏代码块**或**行内代码**里，把光标放到标识符上，按 **F12** 或 **Ctrl+Click**：
+把光标放在**围栏代码块**或**行内代码**中的标识符上，按 **F12** 或 **Ctrl+Click**：
 
 ````markdown
-调用 `nx_start()` 初始化调度器。
+Call `nx_start()` to initialise the scheduler.
 
 ```c
 nxsched_add_readytorun(tcb);
 ```
 ````
 
-同名多定义（例如不同文件里的 `static` 函数）会弹出常见的 Peek 列表 —— 与在 `.c` 文件里完全一致。
+同名多定义（例如不同文件里的 `static` 函数）会弹出与源码里一致的 Peek 列表。
 
 ### 查找所有引用
 
-找出某个 Markdown 符号的全部引用。CodePort 先把该处解析到真实定义，再**在该定义位置**向 Language Server 查询引用 —— 因为只有那里才存在真实的源码位置。
+先解析出定义，再向 CodeGraph 查询它的使用点；图谱的边带着**每个调用点的精确行列**，所以结果落在编译器会放的位置。
 
-### Hover 显示来源与依据
+### 带来源标注的 Hover
 
-悬停符号不仅显示签名，还显示**是哪个引擎作答、置信度多少、依据是什么**：
+悬停会给出签名，以及这个答案建立在哪些信号上：
 
 ```
 nx_start — nx · function
@@ -48,91 +48,106 @@ nx_start — nx · function
 void nx_start(void)
 
 a.c:7
-index · confidence 0.85 · exact name, language c, kind function, unique result
+codegraph · exact name, language c, kind function
 ```
+
+这份依据列表就是全部解释：这里没有数值置信度，因为已经没有东西留给一个数字去决定了。CodeGraph 没有该符号
+的签名时，Hover 改为展示符号自身源码。
 
 ### 路径 / 行号链接
 
 ```
-`/home/user/project/src/main.c:42`  → 绝对路径：打开文件并定位到第 42 行
+`/home/user/project/src/main.c:42`  → 绝对路径：打开该文件第 42 行
 `src/main.c:42`                     → 相对工作区根解析
 ```
 
-也可以通过 `codeport.codeLink.resolveRelativeToMarkdownFile` 选择同时相对 Markdown 文件本身解析。
+也可以用 `codeport.codeLink.resolveRelativeToMarkdownFile` 让它同时相对当前 Markdown 文件解析。
 
-### 插入源码链接（反向能力）
+路径链接**完全不经过代码图谱** —— 装没装 CodeGraph 都能用。
 
-把符号引用改写成指向其定义的 Markdown 链接：
+### 插入源码链接（反方向）
+
+把提及变成指向定义的 Markdown 链接：
 
 ````markdown
 `nx_start()`   →   [nx_start()](../sched/init/nx_start.c#L123)
 ````
 
-从编辑器右键菜单执行（**CodePort: Insert Source Link**）。**仅支持行内代码** —— Markdown 不会渲染围栏代码块内部的链接。
+编辑器右键菜单 → **CodePort: Insert Source Link**。只支持行内代码 —— Markdown 不在围栏代码块里渲染链接。
 
 <br/>
 <br/>
 
 ## 快速上手 🚀
 
-### 1. 安装
+### 1. 安装扩展
 
-推荐打包成 `.vsix` 后安装；也可以从源码直接跑：
+打包 `.vsix` 后安装（推荐），或从源码运行：
 
 ```sh
 npm install && npm run package
-code --install-extension codeport-0.1.1.vsix
+code --install-extension codeport-0.2.0.vsix
 ```
 
-想改代码的话，在 VS Code 里打开本仓库按 **F5** 启动 Extension Development Host —— 见[开发](#开发)。
+想改代码就用 VS Code 打开本仓库按 **F5** 起 Extension Development Host —— 见[开发](#开发)。
 
-### 2. 打开一个 CodePort 能理解的项目
+### 2. 安装 CodeGraph 并给项目建索引
 
-用 **文件 > 打开文件夹…** 打开同时装着源码与 Markdown 的目录。索引会立刻在后台开始构建 —— 它不需要任何构建配置。若要 C/C++ 的**语义**能力，请确保项目有 `compile_commands.json`（或 `.clangd`）且已安装 `clangd`：CodePort 先查工作区根目录，再从 Markdown 文件向上逐级查找，因此 CMake 工程里的 `docs/` 子目录也能正常工作。
+CodePort 只读 CodeGraph 的索引，不负责建。装 CLI 并给要导航的项目建索引：
 
-### 3. 从 Markdown 跳转
+```sh
+npm i -g @colbymchenry/codegraph --registry=https://registry.npmjs.org
+cd <你的项目>
+codegraph index
+```
 
-| 我想…… | 这样做 |
+它会生成 `<项目>/.codegraph/codegraph.db`。CodePort 从被编辑的文件向上查找该目录，所以打开已索引项目的子目录也能用。`codegraph` 装在别处时，用 `codeport.codegraph.path` 指过去。
+
+> **必须用官方 npm 源。** npmmirror 等镜像没有镜像 CodeGraph 的平台包，而 npm 会把「取不到的可选依赖」当成功 —— 结果是安装显示成功、一用就段错误。
+
+### 3. 在 Markdown 里跳转
+
+| 我想…… | 操作 |
 | --- | --- |
-| 跳到定义 | 光标放在标识符上，按 **F12** 或 **Ctrl+Click**（或执行 `CodePort: Go to Definition`） |
-| 不离开笔记先看一眼 | **Alt+F12**（或 `CodePort: Peek Definition`） |
-| 知道为什么解析到了这里 | 悬停该符号 —— 来源依据行会写明引擎、置信度与依据 |
-| 找出所有使用处 | **Shift+F12**（或 `CodePort: Find All References`） |
-| 打开提到的文件 | **Ctrl+Click** `` `src/main.c:42` `` 链接 |
-| 把引用变成指向定义的链接 | 右键行内代码 → **CodePort: Insert Source Link** |
+| 跳到定义 | 光标放标识符上按 **F12** / **Ctrl+Click**（或 `CodePort: Go to Definition`） |
+| 不离开笔记预览 | **Alt+F12**（或 `CodePort: Peek Definition`） |
+| 知道为什么跳到这里 | 悬停 —— 来源行会写出依据与置信度 |
+| 找出所有使用 | **Shift+F12**（或 `CodePort: Find All References`） |
+| 打开被提到的文件 | **Ctrl+Click** `` `src/main.c:42` `` |
+| 把提及变成指向定义的链接 | 右键行内代码 → **CodePort: Insert Source Link** |
 
-每一次策略决策都会记录在 **CodePort: Show Log** 打开的输出通道里。
+决策与评分都会记录：**CodePort: Show Log** 打开输出通道。
 
-### 4. 查看／维护索引
+### 4. 查看索引内容
 
 | 命令 | 说明 |
 | --- | --- |
-| `CodePort: Show Index Statistics` | 显示各工作区的文件／符号／引用数量。 |
-| `CodePort: Rebuild Index` | 删除并重建 `.codeport/index.db`。 |
-| `CodePort: Show Log` | 输出通道日志：跑了哪些引擎、各自返回了什么。 |
-| `CodePort: Migrate mdCodeLinks Settings` | 把旧的 `mdCodeLinks.*` 配置迁移为 `codeport.*`。 |
+| `CodePort: Show Index Statistics` | 每个工作区的文件 / 节点 / 边数量（读自 CodeGraph）。 |
+| `CodePort: Rebuild Index` | 给出应执行的 `codegraph index <目录>` 命令（索引归 CodeGraph 管）。 |
+| `CodePort: Show Log` | 管线日志：引擎跑了什么、返回了什么。 |
 
 <br/>
 
-## 一个使用 CodePort 的笔记示例
+## 一份用了 CodePort 的笔记
 
-C 工程里的 `docs/scheduler.md`：
+项目里的 `docs/scheduler.md`：
 
 ````markdown
 # Scheduler
 
-调用 `nx_start()` 初始化调度器；它声明在 `include/nx/sched.h:42`。
+Call `nx_start()` to initialise the scheduler; it is declared in
+`include/nx/sched.h:42`.
 
-就绪队列由下面这个函数填充：
+The ready-to-run queue is filled in:
 
 ```c
 nxsched_add_readytorun(tcb);
 ```
 
-启动流程见 `src/sched/init/nx_start.c:123`。
+Bring-up is described in `src/sched/init/nx_start.c:123`.
 ````
 
-光标放在 `` `nx_start()` `` 或 `nxsched_add_readytorun` 上，按 **F12** 即可跳到定义；光标放在 `` `include/nx/sched.h:42` `` 上，**Ctrl+Click** 会打开该文件并定位到第 42 行。悬停其中任意一处，都会告诉你这次是哪个引擎作答。
+光标在 `` `nx_start()` `` 或 `nxsched_add_readytorun` 上按 **F12** 打开定义；在 `` `include/nx/sched.h:42` `` 上 **Ctrl+Click** 打开该文件第 42 行。悬停任何一个都会告诉你答案来自哪里。
 
 <br/>
 
@@ -140,143 +155,80 @@ nxsched_add_readytorun(tcb);
 
 ### 通用
 
-| 设置项 | 默认值 | 说明 |
+| 设置 | 默认 | 说明 |
 | --- | --- | --- |
 | `codeport.enabled` | `true` | 总开关。 |
-| `codeport.definition.enabled` | `true` | Markdown 代码内的跳转定义。 |
+| `codeport.definition.enabled` | `true` | Markdown 代码里的跳转定义。 |
 | `codeport.references.enabled` | `true` | 查找所有引用。 |
-| `codeport.hover.enabled` | `true` | 显示签名与来源依据的 Hover。 |
+| `codeport.hover.enabled` | `true` | 带签名与来源的 Hover。 |
 | `codeport.codeLink.enabled` | `true` | 可点击的 `path/file.c:42` 链接。 |
-| `codeport.codeLink.resolveRelativeToMarkdownFile` | `false` | 同时相对 Markdown 文件本身解析路径链接。 |
+| `codeport.codeLink.resolveRelativeToMarkdownFile` | `false` | 同时相对 Markdown 文件解析路径链接。 |
 
-### 解析策略（`codeport.policy`）
+### CodeGraph
 
-本地索引与 Language Server 互补：索引瞬时且可离线，服务端是编译器级的。`codeport.policy` 决定如何组合它们。
-
-| 策略 | 行为 |
-| --- | --- |
-| `index-first`（默认） | 当索引给出的单个候选足够可信（置信度 ≥ `codeport.policy.indexAcceptConfidence`，默认 `0.85`）时直接采用；否则向 Language Server 确认，并优先采用其结果。 |
-| `lsp-first` | 先问 Language Server，失败再回退索引。 |
-| `index-only` | 完全不启动 Language Server。 |
-| `lsp-only` | 完全不用本地索引。 |
-
-例如 ```` ```c ```` 代码块里的 `` `nx_start()` `` 置信度达到 0.85，直接由索引作答；而裸写的 `` `nx_start` `` 只有 0.70，CodePort 就会去问 clangd。具体的权重与阈值见 [docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md#置信度)。
-
-### 索引（`codeport.index.*`）
-
-| 设置项 | 默认值 | 说明 |
+| 设置 | 默认 | 说明 |
 | --- | --- | --- |
-| `codeport.index.enabled` | `true` | 是否构建／使用本地索引。 |
-| `codeport.index.prewarm` | `true` | 打开受支持的项目时，后台构建索引并启动 Language Server。 |
-| `codeport.index.references` | `false` | 是否一并索引调用点（索引更大、构建更慢）。 |
-| `codeport.index.maxFileSize` | `2097152` | 超过此字节数的文件跳过索引。 |
-| `codeport.index.exclude` | `**/.git/**`、`**/node_modules/**`、`**/build/**` 等 | 索引排除的 glob 模式。 |
+| `codeport.codegraph.path` | `""` | CodeGraph 安装位置：包目录、`npm-sdk.js` 入口或 `codegraph` CLI。留空 = 自动探测（项目 `node_modules`，再到常见全局前缀）。 |
+| `codeport.trace` | `messages` | 输出通道日志级别（`off` 仍会报告警告与错误）。 |
 
-### C/C++（`codeport.clangd.*`）
-
-| 设置项 | 默认值 | 说明 |
-| --- | --- | --- |
-| `codeport.clangd.path` | `""` | clangd 二进制路径；留空 = 自动探测。 |
-| `codeport.clangd.arguments` | `[]` | 附加给 clangd 的命令行参数。 |
-| `codeport.clangd.compileCommandsDir` | `""` | 存放 `compile_commands.json` 的目录；留空 = 自动探测。 |
-
-### 其他
-
-| 设置项 | 默认值 | 说明 |
-| --- | --- | --- |
-| `codeport.languages` | `{}` | 覆盖「代码块语言 → 适配器」的映射。 |
-| `codeport.trace` | `messages` | CodePort 输出通道的日志级别（`off` 仍会输出警告与错误）。 |
+其余关于索引的事 —— 索引哪些文件、哪些语言、忽略什么 —— 都是 CodeGraph 自己的配置（项目根的 `codegraph.json` 与 `.codegraph/`）。
 
 <br/>
 
 ## 支持的语言
 
-| 语言 | 项目标记文件 | Language Server | 状态 |
-| --- | --- | --- | --- |
-| C / C++ | `compile_commands.json`、`.clangd` | clangd | ✅ 已实现 |
-| Rust | `Cargo.toml` | rust-analyzer | 🚧 适配器接口已就绪 |
-| Go | `go.mod`、`go.work` | gopls | 🚧 适配器接口已就绪 |
-| TypeScript | `tsconfig.json` | tsserver | 🚧 适配器接口已就绪 |
-| Python | `pyproject.toml` | Pyright | 🚧 适配器接口已就绪 |
+取决于安装的 CodeGraph 能解析什么。范围很广（开发所依据的版本支持 36 种：C、C++、Objective-C、TypeScript/JavaScript、Python、Go、Rust、Java、C#、PHP、Ruby、Swift、Kotlin、Dart、Scala、Lua、R 等）。
 
-新增一门语言 = 写一个 `LanguageAdapter` 和一个 `ProjectDetector`，详见 [docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md#新增一门语言)。核心、索引、解析管线与 UI 都不需要改动。
+不需要按语言做任何配置；要加语言是更新 CodeGraph，不是改 CodePort。
+
+注意：**能解析不等于有语义**。重载、模板、条件编译是按名字与 import 匹配的，不是编译器级判断，见[已知限制](#已知限制)。
 
 <br/>
 
 ## 环境要求
 
-- VS Code **≥ 1.90**（索引依赖 Node 内置的 `node:sqlite`，自 Node 22.5 起提供）。在更老的宿主上 CodePort 仍可用，只是退化为「仅 Language Server」—— 它会自动探测到并在日志中说明。
-- C/C++ 的**语义**能力需要 `clangd` 二进制（自动探测顺序：`codeport.clangd.path` → `/usr/lib/llvm-*/bin/clangd`（版本从新到旧）→ `/usr/local/bin/clangd` → `/usr/bin/clangd` → `PATH`），以及 `compile_commands.json`（或 `.clangd`）。查找顺序是**先工作区根目录，再从 Markdown 文件向上逐级**。
-- 必须打开的是一个文件夹 —— 单独打开一个文件时没有可供索引与解析的项目。
+- VS Code **≥ 1.90**。
+- **安装了 [CodeGraph](https://github.com/colbymchenry/codegraph) 且项目已建索引**（`codegraph index`）。没有它扩展照样激活、路径链接照样可用，但符号导航会报「no definition found」并说明原因。
+- 必须打开一个文件夹 —— 单个散文件没有可解析的项目。
 
-**无原生模块、无需 `npm rebuild`**：索引使用 WASM 版 tree-sitter 与内置 SQLite。
-
-### 没有 clangd / 没有编译数据库时还能用什么
-
-**导航**既不依赖 clangd，也不依赖 `compile_commands.json`。索引按工作区直接扫描源码建立，完全不需要
-构建配置。因此没装 clangd 的机器上、或没有编译数据库的项目里：
-
-| 能力 | 无 clangd / 无 `compile_commands.json` |
-|---|---|
-| 跳转定义 | ✅ 由索引作答 |
-| Hover（签名 + 来源依据） | ✅ 签名来自索引 |
-| 插入源码链接 | ✅ |
-| 路径 / 行号链接 | ✅ |
-| 查找所有引用 | ❌ 需要在真实定义位置上有 Language Server |
-| 重载、模板、宏、条件编译 | ❌ 索引只有结构，没有语义 |
-
-**弱证据** —— 裸写 `` `nx_start` ``，既无调用括号、围栏也没写语言 —— 正是会升级去问 Language Server
-的情况。当服务不可用时，CodePort 会保留索引候选而不是直接失败，并在日志中说明。
+无原生模块、无需 `npm rebuild`：CodePort 自己不带解析器，CodeGraph 自带它需要的运行时。
 
 <br/>
 
 ## 已知限制
 
-- 只扫描**围栏代码块**与**行内代码**；正文永远不会被当作符号，文件路径与 URL 仍归代码链接 Provider 负责。
-- 本地索引止步于符号与（可选的）调用点。调用图、继承图、模板实例化图属于 Language Server 的职责。
-- 目前只有 C/C++ 同时具备内置的项目探测与索引提取器；其余适配器只是等待实现的接口。
-- C/C++ 的**语义**准确性取决于 `compile_commands.json`：没有它索引照样能导航，但重载解析、模板、宏、条件编译需要 clangd；而当 clangd 仍在构建自身索引时（大型项目 30–60 秒），**弱证据**的查询可能只能退回索引的结构性答案。
-- `查找所有引用` 与编译器级签名的 Hover 需要 Language Server；没有它时 CodePort 会报告「未找到引用」，而不是拿自己的候选冒充引用。
-- Markdown 不会渲染围栏代码块内部的链接，因此**插入源码链接**只适用于行内代码。
+- 只扫描**围栏代码块**与**行内代码**，正文永远不会被当作符号，文件提及 / URL 归路径链接所有。
+- **预处理宏跳不了。** CodeGraph 没有 macro 节点类型，`#define` 的名字不在图里，`SOME_MACRO` 形式的提及无法解析。（被替换掉的旧设计用自研 tree-sitter 索引能提取宏 —— 这是那次改动唯一的能力回退。）
+- **没有语义解析。** 重载、模板实例化、条件编译都不建模，CodeGraph 按名字与 import 匹配；编译器能区分的两个重载，这里可能是歧义。
+- **查找所有引用是静态调用图**，不是编译器级结果；同名跨作用域时可能归错目标。
+- 用于评分的语言信号**只来自围栏 info string**。没有围栏的裸 `` `nx_start` `` 因此比过去得分低。
+- Markdown 不在围栏代码块里渲染链接，所以**插入源码链接**只适用于行内代码。
 
 <br/>
 
 ## 工作原理
 
-CodePort 不试图理解所有编程语言，而是把两个引擎当作可互换的证据：**本地索引**（tree-sitter WASM → `.codeport/index.db`，一个增量、可重建的小型 SQLite 缓存）与**你项目的 Language Server**（编译器级语义）。解析管线按策略允许的顺序运行它们、给每个答案打分，并在策略被满足时立即停止。
+CodePort 不试图理解所有语言，也不自带解析器。它把**唯一引擎** —— CodeGraph 的代码图谱 —— 当作事实来源，自己只负责真正属于它的部分：判断一段 Markdown 提及指什么、给候选打分、把胜者变成编辑器的导航目标。
 
 ```
-Markdown  ──►  CodePort  ──►  ┌ CodePort Index  (tree-sitter + SQLite, local, instant)
-   `nx_start()`               └ clangd / rust-analyzer / gopls / … (compiler-grade semantics)
-                                          │
-                                          ▼
-                                  Source definition
+Markdown  ──►  CodePort  ──►  CodeGraph（进程内：定位 SDK → 打开 .codegraph/codegraph.db）
+   `nx_start()`                        │
+                                       ▼
+                                   源码定义
 ```
 
-完整设计 —— 分层、置信度权重、SQLite schema、项目探测、如何新增一门语言 —— 见 **[docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md)**。
+路径链接刻意留在这条管线之外：它就是正则加 `stat`，没有图谱也能工作。
+
+完整设计 —— 分层、置信度权重、两处最容易写错的坐标换算、能力边界，以及「改了什么」—— 见 **[docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md)**。
 
 <br/>
 
-## 从 `md-code-links` 迁移
+## 排错
 
-CodePort 是更名并重新架构后的继任者。首次激活时它会询问是否复制你的配置：
-
-| 旧键 | 新键 |
-| --- | --- |
-| `mdCodeLinks.enableFunctionJump` | `codeport.definition.enabled` |
-| `mdCodeLinks.prewarmIndex` | `codeport.index.prewarm` |
-| `mdCodeLinks.clangdPath` | `codeport.clangd.path` |
-
-迁移**永远不会覆盖**你已经显式设置过的 `codeport.*` 值，旧键也原样保留。之后也可以随时执行 **CodePort: Migrate mdCodeLinks Settings**。
-
-<br/>
-
-## 排障
-
-- **提示 "no definition found"** —— 打开 **CodePort: Show Log**，解析管线会记录跑了哪些引擎、各自返回了什么。常见原因：索引仍在构建（首次运行，或关闭了 `codeport.index.prewarm`）、该名称确实没被索引；或者对于**升级到 clangd 的弱证据**查询，缺少 `compile_commands.json`、clangd 仍在构建自身索引（大型项目 30–60 秒）。
-- **跳转到了错误的位置** —— 悬停该符号，来源依据行会写明引擎与依据。如果是索引答错了，把 `codeport.policy` 改成 `lsp-first`，或把 `codeport.policy.indexAcceptConfidence` 设为 `1`，强制每次都向 Language Server 确认。
-- **索引被禁用** —— 日志会说明原因（缺少 `node:sqlite`，或缺少 tree-sitter 资源）。此时导航仍可通过 Language Server 工作。
-- **大重构后结果陈旧** —— 执行 **CodePort: Rebuild Index**。
+- **「no definition found」** —— 打开 **CodePort: Show Log**。按可能性排序：该目录没有 CodeGraph 索引（`codegraph index <目录>`）；这个名字是预处理宏，CodeGraph 不建模；名字确实不在图里。
+- **「CodeGraph was not found」** —— 没找到已安装的 SDK。安装它（`npm i -g @colbymchenry/codegraph`），或设置 `codeport.codegraph.path`。
+- **跳错了位置** —— 悬停看来源行写的依据。名字有歧义时，在笔记里写限定形式（`` `nx::start()` `` 而不是 `` `start()` ``）会提高正确候选的置信度。
+- **大改之后结果过期** —— 在该项目里跑 `codegraph sync`（或 `codegraph index`）。CodePort 只读图谱，从不写它。
 
 <br/>
 
@@ -284,36 +236,31 @@ CodePort 是更名并重新架构后的继任者。首次激活时它会询问�
 
 - [仓库](https://github.com/rongbc/codeport)
 - [Issues](https://github.com/rongbc/codeport/issues)
-- [架构文档](docs/ARCHITECTURE.zh-CN.md) · [Architecture (English)](docs/ARCHITECTURE.md)
-- [clangd](https://clangd.llvm.org/) —— 首选的 C/C++ Language Server
-- [tree-sitter](https://tree-sitter.github.io/tree-sitter/) —— 本地索引背后的解析器
-- [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) —— CodePort 与 Language Server 的通信方式
+- [架构](docs/ARCHITECTURE.md) · [架构（中文）](docs/ARCHITECTURE.zh-CN.md)
+- [CodeGraph](https://github.com/colbymchenry/codegraph) —— CodePort 读取的代码图谱引擎
 
 <br/>
 
 ## 开发
 
 ```
-src/markdown/    围栏代码块 + 行内代码 → 符号引用
-src/core/        facade、项目与语言管理器、索引生命周期
-src/index/       tree-sitter WASM + node:sqlite 索引（.codeport/index.db）
-src/resolution/  索引与 LSP 解析器、置信度、策略管线
-src/adapters/    LanguageAdapter + ClangdAdapter（注册表遵循 codeport.languages）
-src/project/     ProjectDetector + CppProjectDetector
-src/lsp/         通用 stdio JSON-RPC 客户端与客户端池
-src/providers/   Definition / Reference / Hover / DocumentLink Provider
+src/markdown/    围栏代码块 + 行内代码 → 符号提及
+src/codegraph/   定位/加载 CodeGraph SDK，单图谱门面
+src/core/        门面：图谱、管线、Markdown 解析缓存
+src/resolution/  CodeGraph resolver、置信度、管线
+src/providers/   Definition / Reference / Hover / DocumentLink
 src/commands/    Insert Source Link 与命令面板入口
-test/            80 个单元 + 集成测试（最后一个跑真实打包产物）
+test/            单元 + 集成测试（后两个跑真实 bundle）
 docs/            ARCHITECTURE.md / ARCHITECTURE.zh-CN.md
 ```
 
-脚本：`npm run build`（esbuild → `dist/`）· `npm run watch` · `npm run typecheck` · `npm test`（84 个测试）· `npm run check`（typecheck + build + test）· `npm run package`（`@vscode/vsce` → `codeport-0.1.1.vsix`）。
+脚本：`npm run build`（esbuild → `dist/`）· `npm run watch` · `npm run typecheck` · `npm test` · `npm run check`（typecheck + build + test）· `npm run package`（`@vscode/vsce` → `codeport-0.2.0.vsix`）。
 
-按 **F5** 可以启动 Extension Development Host。
+按 **F5** 启动 Extension Development Host。
 
-`npm run package` 通过 `vscode:prepublish` 先构建 `dist/`，再用 `@vscode/vsce` 打包。`.vsix` 生成在仓库根目录，已被 git 忽略。如希望类型检查与 80 个测试为本次打包把关，先跑 `npm run check`。
+`npm run package` 会通过 `vscode:prepublish` 先构建 `dist/`，再用 `@vscode/vsce` 打包。`.vsix` 写在仓库根目录并被 git 忽略。
 
-测试套件包含一个端到端用例：把**真实打包产物**运行在桩化的 VS Code API 与真实临时 C 项目之上，从而在不启动图形界面的情况下覆盖完整链路（Markdown → 解析 → 项目探测 → 索引 → 解析管线 → Provider）。各测试文件覆盖的内容见 [docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md#测试)。
+测试套件里有端到端用例跑**真实 bundle**（桩化的 VS Code API + 临时项目），所以整条链路（Markdown → 解析 → resolver → provider）不用起 GUI 就被覆盖。CodeGraph 本身由 fixture SDK 通过 `CODEGRAPH_SDK_PATH` 替代，所以测试既不依赖真实安装、也不受它影响。每个测试文件覆盖什么见 [docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md#测试)。
 
 <br/>
 

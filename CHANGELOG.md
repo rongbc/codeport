@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-09-17
+
+### Changed
+
+- **Version 0.2.0 is a breaking change**; no compatibility with 0.1.x is provided.
+- **The symbol engine is now CodeGraph, and it is the only one.** The local tree-sitter index
+  (`.codeport/index.db`) and the language-server tier (clangd via a hand-written LSP client) are gone —
+  roughly 2,900 lines of source and 5.4 MB of WASM assets. CodePort reads a
+  [CodeGraph](https://github.com/colbymchenry/codegraph) graph directly, in-process, with no daemon and no
+  IPC. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#what-changed).
+- **Any language CodeGraph parses now works**, instead of C/C++ only. There is no per-language adapter,
+  extractor or project detector to write.
+- **Find All References comes from the code graph.** CodeGraph's edges carry the exact line and column of
+  each usage, so shift-F12 keeps resolution without a language server.
+- **Path/line links are unaffected** and were already independent of the symbol engine; they now have
+  tests asserting they survive CodeGraph being absent or unopenable.
+
+### Added
+
+- **`codeport.codegraph.path`** — where CodeGraph is installed (package directory, `npm-sdk.js` entry, or
+  the `codegraph` CLI). Empty auto-detects the project's `node_modules` and the usual global prefixes.
+  `CODEGRAPH_SDK_PATH` overrides it for scripts and tests.
+- A `codegraph/` layer (`sdk.ts`, `CodegraphIndex.ts`) that owns the two conversions that are easy to get
+  silently wrong: CodeGraph's 1-based lines, and its project-root-relative file paths.
+
+### Removed
+
+- **Settings**: `codeport.policy`, `codeport.policy.indexAcceptConfidence`, `codeport.index.*`,
+  `codeport.languages`, `codeport.clangd.*`. A single engine has no policy to pick, and CodeGraph owns
+  index configuration (in the project's `codegraph.json`).
+- **The whole `md-code-links` migration.** The `CodePort: Migrate mdCodeLinks Settings` command, the
+  `mdCodeLinks.*` reader and the `offerLegacyMigration` activation prompt are gone. CodePort is pre-1.0 and
+  has no released settings surface worth preserving; the one legacy key that ever had a destination
+  (`mdCodeLinks.enableFunctionJump`) pointed at a capability that no longer has a setting of its own.
+- **The numeric confidence score.** `CODEGRAPH_WEIGHTS`, the normalisation and `clamp01` are gone, and the
+  hover no longer prints a `0.85`. That number existed to be compared against
+  `codeport.policy.indexAcceptConfidence`, which no longer exists, so it gated nothing while reading like a
+  probability. `Confidence.ts` is now `Ranking.ts` and produces an integer evidence rank, which is what
+  actually orders several same-named symbols. The vestigial "uniqueness" term (a property of the result
+  set, not evidence about a candidate) went with it, and contradictions now subtract instead of rejecting —
+  `sameLanguageFamily` is false for every language outside its table, so rejecting would have let a
+  ```` ```text ```` fence silently drop every candidate.
+
+### Known regressions
+
+- **Preprocessor macros can no longer be jumped to.** CodeGraph has no macro node kind, so a `#define`
+  name is not in the graph. The Definition provider's "not found" hint says so.
+- **A bare mention with no fence language scores lower** (`0.60`, was `0.70`): the three-level language
+  strategy is gone and the fence info string is the only remaining signal. This affects ranking and the
+  hover's provenance line, not whether a jump works.
+- **Overloads, templates and conditional compilation** are matched by name and import rather than
+  semantically. This is the same class of answer the old index gave, not a capability the language-server
+  tier used to provide.
+
+### Requirements
+
+- **CodeGraph must be installed and the project indexed** (`npm i -g @colbymchenry/codegraph` then
+  `codegraph index`). Without it CodePort still activates and path links still work, but symbol navigation
+  reports "no definition found" with a hint.
+
 ## [0.1.1] - 2026-09-14
 
 ### Fixed

@@ -179,13 +179,6 @@ export function installVscodeStub(options: StubOptions): StubHandle {
     }
     return {
       get: (key: string, fallback?: unknown) => (scoped.has(key) ? scoped.get(key) : fallback),
-      inspect: (key: string) =>
-        scoped.has(key)
-          ? { key, globalValue: scoped.get(key), workspaceValue: undefined, workspaceFolderValue: undefined }
-          : { key, globalValue: undefined, workspaceValue: undefined, workspaceFolderValue: undefined },
-      update: async (key: string, value: unknown) => {
-        settings[`${prefix}${key}`] = value;
-      },
     };
   }
 

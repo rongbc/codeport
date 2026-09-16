@@ -69,8 +69,8 @@ export async function insertSourceLink(codeport: CodePort): Promise<void> {
 
   if (applied) {
     codeport.logger.info(
-      `insert source link: ${reference.raw} -> ${relative}#L${line} (${best.source}, ` +
-        `confidence ${best.confidence.toFixed(2)})`
+      `insert source link: ${reference.raw} -> ${relative}#L${line} ` +
+        `(${best.source}, ${best.reason ?? 'no evidence'})`
     );
     void vscode.window.setStatusBarMessage(
       `$(link) CodePort: inserted link to ${relative}:${line}`,

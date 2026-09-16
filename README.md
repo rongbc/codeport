@@ -6,14 +6,14 @@
   <img src="media/codeport_logo.png" alt="CodePort" width="128" />
 </p>
 
-![VS Code](https://img.shields.io/badge/VS%20Code-1.90%2B-blue) ![License](https://img.shields.io/badge/license-MIT-blue) ![Engines](https://img.shields.io/badge/engines-local%20index%20%2B%20language%20server-orange) ![C%2FC%2B%2B](https://img.shields.io/badge/C%2FC%2B%2B-clangd-brightgreen)
+![VS Code](https://img.shields.io/badge/VS%20Code-1.90%2B-blue) ![License](https://img.shields.io/badge/license-MIT-blue) ![Engine](https://img.shields.io/badge/engine-CodeGraph-orange) ![Languages](https://img.shields.io/badge/languages-any%20CodeGraph%20parses-brightgreen)
 
-**Put the cursor on a symbol written in your Markdown and jump straight to its source.** CodePort brings go-to-definition, Peek Definition, Find All References, hover and clickable `path/file.c:42` links to the fenced code blocks and inline code in your notes — using your project's real language server, backed by a fast local index.
+**Put the cursor on a symbol written in your Markdown and jump straight to its source.** CodePort brings go-to-definition, Peek Definition, Find All References, hover and clickable `path/file.c:42` links to the fenced code blocks and inline code in your notes — backed by a [CodeGraph](https://github.com/colbymchenry/codegraph) code graph.
 
-- **F12 / Ctrl+Click on an identifier** inside a fenced code block or inline code span opens the same definition, and the same Peek list for duplicates, as inside a `.c` file.
-- **Instant, and offline for the obvious cases.** A local tree-sitter + SQLite index answers unambiguous mentions in milliseconds; the language server is asked only when the evidence is weaker. Which engine answered, how confident it was and why is written in the hover and in the log.
+- **F12 / Ctrl+Click on an identifier** inside a fenced code block or inline code span opens the same definition, and the same Peek list for duplicates, as inside a source file.
+- **One engine, no language servers.** CodePort no longer needs clangd (or any other server) to answer a jump. It reads a CodeGraph index directly, in-process — no daemon, no IPC, sub-millisecond lookups.
+- **Any language CodeGraph can parse**, not just C/C++. There is nothing to configure per language.
 - **Find All References**, **hover with provenance**, clickable `` `src/main.c:42` `` path links, and **Insert Source Link** to turn `` `nx_start()` `` into `[nx_start()](../sched/init/nx_start.c#L123)`.
-- **C/C++ first**, through clangd; the adapter interface is ready for Rust, Go, TypeScript and Python.
 - Feature requests and bug reports are welcome in [Issues](https://github.com/rongbc/codeport/issues).
 
 <br/>
@@ -36,11 +36,11 @@ Multiple definitions (for example `static` functions with the same name in diffe
 
 ### Find All References
 
-Finds every reference to a Markdown symbol. CodePort first resolves the mention to a real definition and then asks the language server for references *at that definition*, where a real source position exists.
+Finds every reference to a Markdown symbol. CodePort resolves the mention to a definition and then asks CodeGraph for its usages; the graph's edges carry the exact line and column of each call site, so the results land where the compiler would put them.
 
 ### Hover with provenance
 
-Hovering a symbol shows its signature — and which engine answered, how confident it was, and why:
+Hovering a symbol shows its signature — and which signals the answer was based on:
 
 ```
 nx_start — nx · function
@@ -48,8 +48,12 @@ nx_start — nx · function
 void nx_start(void)
 
 a.c:7
-index · confidence 0.85 · exact name, language c, kind function, unique result
+codegraph · exact name, language c, kind function
 ```
+
+The evidence list is the entire explanation: there is no numeric confidence, because there is nothing left
+for a number to decide. When CodeGraph has no signature for a symbol, the hover shows the symbol's own
+source instead.
 
 ### Path / line links
 
@@ -59,6 +63,8 @@ index · confidence 0.85 · exact name, language c, kind function, unique result
 ```
 
 Optionally also resolved relative to the Markdown file itself (`codeport.codeLink.resolveRelativeToMarkdownFile`).
+
+Path links do not touch the code graph at all — they keep working whether or not CodeGraph is installed.
 
 ### Insert source link (the other direction)
 
@@ -81,14 +87,24 @@ Package a `.vsix` and install it (recommended), or run the extension from source
 
 ```sh
 npm install && npm run package
-code --install-extension codeport-0.1.1.vsix
+code --install-extension codeport-0.2.0.vsix
 ```
 
 To hack on it instead, open the repository in VS Code and press **F5** to launch an Extension Development Host — see [Development](#development).
 
-### 2. Open a project CodePort can understand
+### 2. Install CodeGraph and index your project
 
-Open the folder that holds your sources and your Markdown with **File > Open Folder…**. The index starts building in the background straight away — it needs no build configuration. For C/C++ *semantic* features, make sure the project has a `compile_commands.json` (or a `.clangd`) and that `clangd` is installed: CodePort looks in the workspace root first, then upwards from the Markdown file, so `docs/` inside a CMake tree works.
+CodePort reads a CodeGraph index; it does not build one. Install the CLI and index each project you want to navigate:
+
+```sh
+npm i -g @colbymchenry/codegraph --registry=https://registry.npmjs.org
+cd <your-project>
+codegraph index
+```
+
+That creates `<your-project>/.codegraph/codegraph.db`. CodePort finds it by walking up from the file being edited, so opening a subdirectory of an indexed project works. If `codegraph` lives somewhere unusual, point `codeport.codegraph.path` at it.
+
+> **Use the official npm registry.** Mirrors such as npmmirror do not carry CodeGraph's per-platform package, and npm treats an unfetchable optional dependency as success — you get an install that reports success and then segfaults on first use.
 
 ### 3. Jump from Markdown
 
@@ -96,27 +112,26 @@ Open the folder that holds your sources and your Markdown with **File > Open Fol
 | --- | --- |
 | jump to the definition | put the cursor on the identifier, press **F12** or **Ctrl+Click** (or `CodePort: Go to Definition`) |
 | peek without leaving the note | **Alt+F12** (or `CodePort: Peek Definition`) |
-| see why a symbol resolved where it did | hover it — the provenance line names the engine, the confidence and the evidence |
+| see why a symbol resolved where it did | hover it — the provenance line names the evidence |
 | find every use | **Shift+F12** (or `CodePort: Find All References`) |
 | open a mentioned file | **Ctrl+Click** the `` `src/main.c:42` `` link |
 | link a mention to its definition | right-click the inline code → **CodePort: Insert Source Link** |
 
-Ratings and policy decisions are logged: **CodePort: Show Log** opens the output channel.
+Ratings and decisions are logged: **CodePort: Show Log** opens the output channel.
 
 ### 4. Review what the index holds
 
 | Command | Description |
 | --- | --- |
-| `CodePort: Show Index Statistics` | File / symbol / reference counts per workspace. |
-| `CodePort: Rebuild Index` | Drop and rebuild `.codeport/index.db`. |
-| `CodePort: Show Log` | The pipeline log: which engines ran and what each returned. |
-| `CodePort: Migrate mdCodeLinks Settings` | Copy old `mdCodeLinks.*` settings to `codeport.*`. |
+| `CodePort: Show Index Statistics` | Files / nodes / edges per workspace, read from CodeGraph. |
+| `CodePort: Rebuild Index` | Shows the `codegraph index <folder>` command to run (CodeGraph owns the index). |
+| `CodePort: Show Log` | The pipeline log: what the engine ran and what it returned. |
 
 <br/>
 
 ## A note that uses CodePort
 
-`docs/scheduler.md` inside a C project:
+`docs/scheduler.md` inside a project:
 
 ````markdown
 # Scheduler
@@ -133,7 +148,7 @@ nxsched_add_readytorun(tcb);
 Bring-up is described in `src/sched/init/nx_start.c:123`.
 ````
 
-With the cursor on `` `nx_start()` `` or on `nxsched_add_readytorun`, **F12** opens the definition. With the cursor on `` `include/nx/sched.h:42` ``, **Ctrl+Click** opens that file at line 42. Hovering any of them tells you which engine answered.
+With the cursor on `` `nx_start()` `` or on `nxsched_add_readytorun`, **F12** opens the definition. With the cursor on `` `include/nx/sched.h:42` ``, **Ctrl+Click** opens that file at line 42. Hovering any of them tells you where the answer came from.
 
 <br/>
 
@@ -150,132 +165,71 @@ With the cursor on `` `nx_start()` `` or on `nxsched_add_readytorun`, **F12** op
 | `codeport.codeLink.enabled` | `true` | Clickable `path/file.c:42` links. |
 | `codeport.codeLink.resolveRelativeToMarkdownFile` | `false` | Also resolve path links relative to the Markdown file. |
 
-### Resolution policy (`codeport.policy`)
-
-The local index and the language server are complementary: the index is instant and works offline, the server is compiler-grade. `codeport.policy` decides how they are combined.
-
-| Policy | Behaviour |
-| --- | --- |
-| `index-first` *(default)* | Use the index when a single candidate is convincing (confidence ≥ `codeport.policy.indexAcceptConfidence`, default `0.85`); otherwise confirm with the language server and prefer its answer. |
-| `lsp-first` | Ask the language server first; fall back to the index. |
-| `index-only` | Never start a language server. |
-| `lsp-only` | Never use the local index. |
-
-A mention like `` `nx_start()` `` inside a ```` ```c ```` block reaches 0.85 and is served straight from the index; a bare `` `nx_start` `` reaches only 0.70, so CodePort asks clangd. The exact weights and thresholds are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#confidence).
-
-### Index (`codeport.index.*`)
+### CodeGraph
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `codeport.index.enabled` | `true` | Build/use the local index. |
-| `codeport.index.prewarm` | `true` | Build the index and start language servers in the background on open. |
-| `codeport.index.references` | `false` | Also index call sites (bigger index, slower build). |
-| `codeport.index.maxFileSize` | `2097152` | Skip files larger than this (bytes). |
-| `codeport.index.exclude` | `**/.git/**`, `**/node_modules/**`, `**/build/**`, … | Glob patterns excluded from the index. |
-
-### C/C++ (`codeport.clangd.*`)
-
-| Setting | Default | Description |
-| --- | --- | --- |
-| `codeport.clangd.path` | `""` | clangd binary; empty = auto-detect. |
-| `codeport.clangd.arguments` | `[]` | Extra clangd arguments. |
-| `codeport.clangd.compileCommandsDir` | `""` | Directory holding `compile_commands.json`; empty = auto-detect. |
-
-### Other
-
-| Setting | Default | Description |
-| --- | --- | --- |
-| `codeport.languages` | `{}` | Override the fence-language → adapter mapping. |
+| `codeport.codegraph.path` | `""` | Path to an installed CodeGraph: the package directory, the `npm-sdk.js` entry, or the `codegraph` CLI. Empty = auto-detect (the project's `node_modules`, then the usual global prefixes). |
 | `codeport.trace` | `messages` | Log level for the CodePort output channel (`off` still reports warnings and errors). |
+
+Everything else about indexing — which files, which languages, what to ignore — is CodeGraph's own configuration (`codegraph.json` in the project root, and `.codegraph/`). See its documentation.
 
 <br/>
 
 ## Supported languages
 
-| Language | Project marker | Language server | Status |
-| --- | --- | --- | --- |
-| C / C++ | `compile_commands.json`, `.clangd` | clangd | ✅ implemented |
-| Rust | `Cargo.toml` | rust-analyzer | 🚧 adapter interface ready |
-| Go | `go.mod`, `go.work` | gopls | 🚧 adapter interface ready |
-| TypeScript | `tsconfig.json` | tsserver | 🚧 adapter interface ready |
-| Python | `pyproject.toml` | Pyright | 🚧 adapter interface ready |
+Whatever the installed CodeGraph can parse. That is a broad set (36 languages in the version CodePort was developed against: C, C++, Objective-C, TypeScript/JavaScript, Python, Go, Rust, Java, C#, PHP, Ruby, Swift, Kotlin, Dart, Scala, Lua, R, and more).
 
-Adding a language means writing one `LanguageAdapter` and one `ProjectDetector` — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#adding-a-language). The core, the index, the resolver pipeline and the UI do not change.
+Nothing is configured per language, and adding a language means updating CodeGraph — not CodePort.
+
+Caveat: a *parse* is not *semantics*. Overloads, templates and conditional compilation are resolved by name and import, not by a compiler. See [Known limitations](#known-limitations).
 
 <br/>
 
 ## Requirements
 
-- VS Code **≥ 1.90** (the index uses Node's built-in `node:sqlite`, available from Node 22.5). On an older host CodePort still works, language-server only — it detects this and says so in the log.
-- For C/C++ **semantic** features: a `clangd` binary (auto-detected: `codeport.clangd.path`, `/usr/lib/llvm-*/bin/clangd` newest first, `/usr/local/bin/clangd`, `/usr/bin/clangd`, `PATH`), plus a `compile_commands.json` (or a `.clangd` file). It is looked for in the workspace root first, then upwards from the Markdown file.
-- A folder must be open — in a single loose file there is no project to index or resolve against.
+- VS Code **≥ 1.90**.
+- **[CodeGraph](https://github.com/colbymchenry/codegraph) installed, and the project indexed** (`codegraph index`). Without it CodePort still activates — path links keep working — but symbol navigation reports "no definition found" and tells you why.
+- A folder must be open — in a single loose file there is no project to resolve against.
 
-No native modules, no `npm rebuild`: the index uses WASM tree-sitter and built-in SQLite.
-
-### What works without clangd or a build system
-
-Neither clangd nor `compile_commands.json` is required for **navigation**. The index is built per workspace straight from the sources — it needs no build configuration at all — so on a machine without clangd, or in a project without a compilation database:
-
-| Capability | Without clangd / `compile_commands.json` |
-|---|---|
-| Go to definition | ✅ answered by the index |
-| Hover (signature + provenance) | ✅ signature comes from the index |
-| Insert Source Link | ✅ |
-| Path / line links | ✅ |
-| Find All References | ❌ needs a server at a real definition position |
-| Overloads, templates, macros, conditional compilation | ❌ the index is structural, not semantic |
-
-A *weak* mention — a bare `` `nx_start` ``, with no call parentheses and no fence language — is exactly the case that escalates to the language server. When that server is unavailable, CodePort keeps the index candidate instead of failing, and says so in the log.
+No native modules, no `npm rebuild`: CodePort ships no parsers of its own, and CodeGraph bundles the runtime it needs.
 
 <br/>
 
 ## Known limitations
 
 - Only **fenced code blocks** and **inline code** are scanned; prose is never treated as a symbol, and file mentions / URLs stay owned by the code-link provider.
-- The local index stops at symbols and (optional) call sites. Call graphs, inheritance graphs and template-instantiation graphs belong to the language server.
-- C/C++ is the only language with a built-in detector and index extractor today; the other adapters are interfaces waiting for an implementation.
-- C/C++ **semantic** accuracy is only as good as `compile_commands.json`. The index still navigates without it, but overload resolution, templates, macros and conditional compilation need clangd — and while clangd is building its own index (30–60 s on a large project) a *weak* mention can fall back to the index's structural answer.
-- `Find All References` and the compiler-grade hover signature require a language server; without one, CodePort reports no references rather than inventing them.
+- **Preprocessor macros cannot be jumped to.** CodeGraph has no macro node kind, so a `#define` name is not in the graph and a `SOME_MACRO` mention will not resolve. (The retired design's own tree-sitter index did extract macros; this is the one outright regression from that change.)
+- **No semantic resolution.** Overloads, template instantiations and conditional compilation are not modelled — CodeGraph matches by name and import. Two overloads can be ambiguous where a compiler would not be.
+- **Find All References is a static call graph**, not a compiler-grade one. It can attribute a call to the wrong target when names collide across scopes.
+- Language detection for scoring comes from the **fence info string** only. A bare `` `nx_start` `` with no fence therefore scores lower than it used to.
 - Markdown does not render links inside a fenced code block, so **Insert Source Link** applies to inline code only.
 
 <br/>
 
 ## How it works
 
-CodePort does not try to understand every programming language. It treats two engines as interchangeable evidence: a **local index** (tree-sitter WASM → `.codeport/index.db`, a small SQLite cache that is incremental and rebuildable) and **your project's language server** (compiler-grade semantics). A resolver pipeline runs them in the order the policy allows, scores each answer, and stops as soon as the policy is satisfied.
+CodePort does not try to understand every programming language, and it does not ship a parser. It treats a **single engine** — CodeGraph's code graph — as the source of truth, and owns only what is genuinely its job: deciding what a Markdown mention means, scoring the candidates, and turning the winner into an editor navigation target.
 
 ```
-Markdown  ──►  CodePort  ──►  ┌ CodePort Index  (tree-sitter + SQLite, local, instant)
-   `nx_start()`               └ clangd / rust-analyzer / gopls / … (compiler-grade semantics)
-                                          │
-                                          ▼
-                                  Source definition
+Markdown  ──►  CodePort  ──►  CodeGraph (in-process: locate SDK → open .codegraph/codegraph.db)
+   `nx_start()`                        │
+                                       ▼
+                               Source definition
 ```
 
-The full design — layers, confidence weights, the SQLite schema, project detection and how to add a language — is in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Path links are deliberately outside this pipeline: they are a regex and a `stat`, and they work with no graph at all.
 
-<br/>
-
-## Migrating from `md-code-links`
-
-CodePort is the renamed, re-architected successor. On first activation it offers to copy your settings:
-
-| Old | New |
-| --- | --- |
-| `mdCodeLinks.enableFunctionJump` | `codeport.definition.enabled` |
-| `mdCodeLinks.prewarmIndex` | `codeport.index.prewarm` |
-| `mdCodeLinks.clangdPath` | `codeport.clangd.path` |
-
-The migration never overwrites a `codeport.*` value you already set, and the old keys are left untouched. You can also run it later via **CodePort: Migrate mdCodeLinks Settings**.
+The full design — layers, the ranking signals, the two coordinate conversions that are easy to get wrong, the capability boundary and what changed — is in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 <br/>
 
 ## Troubleshooting
 
-- **"no definition found"** — Open **CodePort: Show Log**. The pipeline logs which engines ran and what each returned. Common causes: the index is still building (first run, or `codeport.index.prewarm` disabled), the name genuinely is not indexed, or — for a *weak* mention that escalated to clangd — a missing `compile_commands.json` or clangd still building its own index (30–60 s on a large project).
-- **A jump went to the wrong place** — Hover the symbol: the provenance line names the engine and the evidence. If the index answered wrongly, set `codeport.policy` to `lsp-first`, or `codeport.policy.indexAcceptConfidence` to `1` to always confirm with the server.
-- **The index is disabled** — The log says why (`node:sqlite` missing, or tree-sitter assets absent). Navigation still works through language servers.
-- **Stale results after a big refactor** — Run **CodePort: Rebuild Index**.
+- **"no definition found"** — Open **CodePort: Show Log**. Common causes, in order of likelihood: the folder has no CodeGraph index (`codegraph index <folder>`); the name is a preprocessor macro, which CodeGraph does not model; the name is genuinely not in the graph.
+- **"CodeGraph was not found"** — No installed SDK was located. Install it (`npm i -g @colbymchenry/codegraph`), or set `codeport.codegraph.path`.
+- **A jump went to the wrong place** — Hover the symbol: the provenance line names the evidence. If a name is ambiguous, prefer the qualified form in your notes (`` `nx::start()` `` rather than `` `start()` ``), which raises the rank of the right candidate.
+- **Stale results after a big refactor** — Run `codegraph sync` (or `codegraph index`) in that project. CodePort reads the graph as-is and never writes to it.
 
 <br/>
 
@@ -284,9 +238,7 @@ The migration never overwrites a `codeport.*` value you already set, and the old
 - [Repository](https://github.com/rongbc/codeport)
 - [Issues](https://github.com/rongbc/codeport/issues)
 - [Architecture](docs/ARCHITECTURE.md) · [架构（中文）](docs/ARCHITECTURE.zh-CN.md)
-- [clangd](https://clangd.llvm.org/) — the C/C++ language server used first
-- [tree-sitter](https://tree-sitter.github.io/tree-sitter/) — the parser behind the local index
-- [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) — how CodePort talks to servers
+- [CodeGraph](https://github.com/colbymchenry/codegraph) — the code graph engine CodePort reads
 
 <br/>
 
@@ -294,25 +246,22 @@ The migration never overwrites a `codeport.*` value you already set, and the old
 
 ```
 src/markdown/    fenced code blocks + inline code spans -> symbol mentions
-src/core/        facade, project & language managers, index lifecycle
-src/index/       tree-sitter WASM + node:sqlite index (.codeport/index.db)
-src/resolution/  index and LSP resolvers, confidence, the policy pipeline
-src/adapters/    LanguageAdapter + ClangdAdapter (registry honours codeport.languages)
-src/project/     ProjectDetector + CppProjectDetector
-src/lsp/         generic stdio JSON-RPC client and client pool
+src/codegraph/   locate/load the CodeGraph SDK, per-root graph facade
+src/core/        facade: graphs, pipeline, Markdown parse cache
+src/resolution/  the CodeGraph resolver, ranking, the pipeline
 src/providers/   Definition / Reference / Hover / DocumentLink providers
 src/commands/    Insert Source Link + the command palette entries
-test/            80 unit + integration tests (the last one runs the built bundle)
+test/            unit + integration tests (the last two run the built bundle)
 docs/            ARCHITECTURE.md / ARCHITECTURE.zh-CN.md
 ```
 
-Scripts: `npm run build` (esbuild → `dist/`) · `npm run watch` · `npm run typecheck` · `npm test` (84 tests) · `npm run check` (typecheck + build + test) · `npm run package` (`@vscode/vsce` → `codeport-0.1.1.vsix`).
+Scripts: `npm run build` (esbuild → `dist/`) · `npm run watch` · `npm run typecheck` · `npm test` · `npm run check` (typecheck + build + test) · `npm run package` (`@vscode/vsce` → `codeport-0.2.0.vsix`).
 
 Press **F5** to launch an Extension Development Host.
 
-`npm run package` builds `dist/` through `vscode:prepublish` and then packages it with `@vscode/vsce`. The `.vsix` is written to the repository root and is git-ignored. Run `npm run check` first if you want the type-check and the 80 tests to gate the build.
+`npm run package` builds `dist/` through `vscode:prepublish` and then packages it with `@vscode/vsce`. The `.vsix` is written to the repository root and is git-ignored.
 
-The suite includes an end-to-end test that runs the **real bundle** against a stubbed VS Code API and a real temporary C project, so the whole chain (Markdown → parser → project detection → index → resolver → provider) is covered without launching a GUI. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#testing) for what each test file covers.
+The suite includes end-to-end tests that run the **real bundle** against a stubbed VS Code API and a temporary project, so the whole chain (Markdown → parser → resolver → provider) is covered without launching a GUI. CodeGraph itself is replaced by a fixture SDK through `CODEGRAPH_SDK_PATH`, so the tests neither need nor are affected by a real install. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#testing) for what each test file covers.
 
 <br/>
 

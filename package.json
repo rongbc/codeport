@@ -2,7 +2,7 @@
   "name": "codeport",
   "displayName": "CodePort \u2014 Navigate Markdown to Source Code",
   "description": "Bring source-code navigation to Markdown. Resolve symbols in code blocks and inline code through a local CodePort index and your project's language servers (clangd first).",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "RongBaichuan",
   "author": "rong baichuan",
   "license": "MIT",
@@ -89,11 +89,6 @@
         "command": "codeport.showLog",
         "title": "Show Log",
         "category": "CodePort"
-      },
-      {
-        "command": "codeport.migrateSettings",
-        "title": "Migrate mdCodeLinks Settings",
-        "category": "CodePort"
       }
     ],
     "menus": {
@@ -117,12 +112,6 @@
           "command": "codeport.insertSourceLink",
           "when": "editorLangId == markdown",
           "group": "navigation@4"
-        }
-      ],
-      "commandPalette": [
-        {
-          "command": "codeport.migrateSettings",
-          "when": "config.codeport.enabled"
         }
       ]
     },
@@ -160,94 +149,10 @@
           "default": false,
           "description": "Also resolve path links relative to the directory of the Markdown file itself (in addition to absolute paths and workspace-root-relative paths)."
         },
-        "codeport.policy": {
-          "type": "string",
-          "enum": [
-            "index-first",
-            "lsp-first",
-            "index-only",
-            "lsp-only"
-          ],
-          "default": "index-first",
-          "markdownDescription": "How CodePort combines its two engines.\n\n- `index-first`: consult the local index, accept it when confident, otherwise confirm with the language server.\n- `lsp-first`: ask the language server first, fall back to the index.\n- `index-only`: never start a language server.\n- `lsp-only`: never use the local index.",
-          "scope": "window"
-        },
-        "codeport.policy.indexAcceptConfidence": {
-          "type": "number",
-          "default": 0.85,
-          "minimum": 0,
-          "maximum": 1,
-          "markdownDescription": "Confidence a single index candidate must reach for `index-first` to skip the language server.",
-          "scope": "window"
-        },
-        "codeport.index.enabled": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Build and use the local CodePort index (`.codeport/index.db`, tree-sitter + SQLite). Requires a VS Code with Node 22.5+ (for `node:sqlite`); otherwise CodePort silently falls back to the language server only.",
-          "scope": "window"
-        },
-        "codeport.index.prewarm": {
-          "type": "boolean",
-          "default": true,
-          "description": "Build/sync the local index and start the project's language servers in the background when a supported project is opened."
-        },
-        "codeport.index.references": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Also index symbol references (call sites). Increases index size and build time; reference *queries* still come from the language server.",
-          "scope": "window"
-        },
-        "codeport.index.maxFileSize": {
-          "type": "number",
-          "default": 2097152,
-          "description": "Skip files larger than this many bytes when indexing."
-        },
-        "codeport.index.exclude": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [
-            "**/.git/**",
-            "**/.codeport/**",
-            "**/node_modules/**",
-            "**/build/**",
-            "**/out/**",
-            "**/dist/**",
-            "**/target/**",
-            "**/.cache/**"
-          ],
-          "markdownDescription": "Glob patterns excluded from indexing.",
-          "scope": "window"
-        },
-        "codeport.languages": {
-          "type": "object",
-          "default": {},
-          "additionalProperties": {
-            "type": "string"
-          },
-          "markdownDescription": "Map a Markdown code-fence language to an adapter id, e.g. `{ \"c\": \"clangd\", \"cpp\": \"clangd\" }`. Empty values use the built-in language detection.",
-          "scope": "window"
-        },
-        "codeport.clangd.path": {
+        "codeport.codegraph.path": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to the clangd binary. Empty = auto-detect (/usr/lib/llvm-*/bin/clangd, /usr/local/bin/clangd, /usr/bin/clangd, PATH).",
-          "scope": "window"
-        },
-        "codeport.clangd.arguments": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [],
-          "description": "Extra command-line arguments appended when launching clangd.",
-          "scope": "window"
-        },
-        "codeport.clangd.compileCommandsDir": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Directory containing `compile_commands.json`. Empty = auto-detect (workspace root, then upwards from the Markdown file).",
+          "markdownDescription": "Path to an installed CodeGraph: the package directory, the SDK entry (`npm-sdk.js`), or the `codegraph` CLI. Empty = auto-detect (the project's `node_modules`, then the usual global prefixes).",
           "scope": "window"
         },
         "codeport.trace": {
@@ -278,7 +183,6 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/vscode": "^1.90.0",
-    "@vscode/tree-sitter-wasm": "^0.3.1",
     "esbuild": "^0.28.0",
     "typescript": "^5.6.0"
   }

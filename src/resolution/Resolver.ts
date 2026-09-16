@@ -1,17 +1,15 @@
 /**
- * The resolver abstraction (plan section 3).
+ * The resolver abstraction.
  *
- * CodePort has two engines — the local index and language servers — and does not
- * let either one own the answer. Both produce the same `ResolutionResult`, and a
- * policy decides how they are combined (plan sections 11-14).
+ * CodePort has a single engine — CodeGraph — but keeps the resolver interface so
+ * the pipeline still isolates failures and still produces the same
+ * `ResolutionResult` the providers and the hover provenance consume.
  */
 
-import type { Project } from '../project/Project.ts';
 import type { Location, Position, ResolvedSymbol, SymbolReference } from '../types.ts';
 
-/** Stable resolver ids, referenced by policies and the log. */
-export const INDEX_RESOLVER_ID = 'index';
-export const LSP_RESOLVER_ID = 'lsp';
+/** Stable resolver id, referenced by the log and shown in the hover. */
+export const CODEGRAPH_RESOLVER_ID = 'codegraph';
 
 export interface ResolveContext {
   /** The Markdown mention being resolved. */
@@ -29,9 +27,13 @@ export interface ResolveContext {
 
 export interface ResolutionCandidate {
   readonly location: Location;
-  /** 0..1. Higher wins when candidates are merged. */
-  readonly confidence: number;
-  /** Resolver that produced the candidate (`index`, `lsp`). */
+  /**
+   * How many independent pieces of evidence agree with this candidate, minus the
+   * ones that contradict it. Higher sorts first. Not a probability — see
+   * `Ranking.ts`.
+   */
+  readonly rank: number;
+  /** Resolver that produced the candidate (`codegraph`). */
   readonly source: string;
   /** Human readable justification, surfaced in the hover and the log. */
   readonly reason?: string;
@@ -41,8 +43,6 @@ export interface ResolutionCandidate {
 export interface ResolutionResult {
   readonly resolver: string;
   readonly candidates: readonly ResolutionCandidate[];
-  /** Best candidate confidence; 0 when the resolver found nothing. */
-  readonly confidence: number;
   readonly durationMs: number;
   /** Set when the resolver failed; the pipeline keeps going regardless. */
   readonly error?: string;
@@ -50,14 +50,13 @@ export interface ResolutionResult {
 
 export interface SymbolResolver {
   readonly id: string;
-  readonly kind: 'index' | 'lsp';
   /** Cheap pre-flight check so an unavailable resolver costs nothing. */
   isAvailable(context: ResolveContext): boolean;
   resolve(context: ResolveContext): Promise<ResolutionResult>;
 }
 
 export interface ResolutionOutcome {
-  /** Merged, de-duplicated, confidence-sorted candidates. */
+  /** Merged, de-duplicated, rank-sorted candidates. */
   readonly candidates: readonly ResolutionCandidate[];
   /** Per-resolver results, for logging and the "why" UI. */
   readonly results: readonly ResolutionResult[];

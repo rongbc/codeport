@@ -1,10 +1,9 @@
 /**
  * Hover for a Markdown symbol.
  *
- * Shows the signature when the index has one, falls back to the language
- * server's hover, and — uniquely useful for a navigation aid — documents *why*
- * CodePort picked this definition (which engine, with what confidence, based on
- * which evidence).
+ * Shows the signature when CodeGraph reports one, falls back to the symbol's own
+ * source when it does not, and — uniquely useful for a navigation aid — documents
+ * *why* CodePort picked this definition (which engine, on what evidence).
  */
 
 import * as vscode from 'vscode';
@@ -43,16 +42,14 @@ export function createHoverProvider(codeport: CodePort): vscode.HoverProvider {
         markdown.appendMarkdown(` — \`${label!}\``);
       }
 
-      // Prefer index metadata, then ask the server for a real signature.
+      // Prefer CodeGraph's `signature` field; when it has none, show the symbol's
+      // own source, which CodeGraph reads straight from disk.
       let signature = best.symbol?.signature;
       if (!signature) {
-        const target = codeport.targetForLocation(best.location);
-        if (target) {
-          try {
-            signature = await codeport.fetchServerHover(target, best.location);
-          } catch (error) {
-            codeport.logger.trace(`hover lookup failed: ${(error as Error).message}`);
-          }
+        try {
+          signature = await codeport.symbolSource(best.location, best.symbol?.id);
+        } catch (error) {
+          codeport.logger.trace(`source lookup failed: ${(error as Error).message}`);
         }
       }
       if (signature) {
@@ -73,7 +70,7 @@ export function createHoverProvider(codeport: CodePort): vscode.HoverProvider {
 
       const others = outcome.candidates.length - 1;
       markdown.appendMarkdown(
-        `\n\n$(circuit-board) ${best.source} · confidence ${best.confidence.toFixed(2)}` +
+        `\n\n$(circuit-board) ${best.source}` +
           (best.reason ? ` · ${escapeMarkdown(best.reason)}` : '') +
           (others > 0 ? ` · +${others} more definition(s)` : '')
       );

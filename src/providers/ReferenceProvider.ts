@@ -1,18 +1,19 @@
 /**
  * Find All References for a Markdown symbol.
  *
- * The index cannot answer this (it stores no call graph — plan section 7), so the
- * mention is first resolved to a real definition and the language server is then
- * asked for references *at that definition*, where a genuine position exists.
+ * CodeGraph keeps a static call/reference graph, and its edges carry the exact
+ * line and column of every usage, so the mention is resolved once and each
+ * candidate's node id is expanded into reference sites.
+ *
+ * The trade-off versus the language server this replaced: CodeGraph resolves
+ * references by name and import, not semantically, so overloads and
+ * macro-expanded call sites can be attributed to the wrong target.
  */
 
 import * as vscode from 'vscode';
 import type { CodePort } from '../core/CodePort.ts';
 import type { Location } from '../types.ts';
 import { toVsLocation } from '../vscode/convert.ts';
-
-/** How many resolved definitions to expand into reference searches. */
-const MAX_DEFINITIONS = 5;
 
 export function createReferenceProvider(codeport: CodePort): vscode.ReferenceProvider {
   return {
@@ -40,14 +41,12 @@ export function createReferenceProvider(codeport: CodePort): vscode.ReferencePro
       const seen = new Set<string>();
       const locations: vscode.Location[] = [];
 
-      for (const candidate of outcome.candidates.slice(0, MAX_DEFINITIONS)) {
+      for (const candidate of outcome.candidates.slice(0, codeport.referenceTargetLimit())) {
         if (token.isCancellationRequested) break;
-        const target = codeport.targetForLocation(candidate.location);
-        if (!target) continue;
         try {
-          const references = await codeport.findReferences(
-            target,
+          const references = await codeport.referencesFor(
             candidate.location,
+            candidate.symbol?.id,
             context.includeDeclaration
           );
           for (const found of references) {

@@ -2,7 +2,6 @@
 
 import * as vscode from 'vscode';
 import type { CodePort } from '../core/CodePort.ts';
-import { applyMigrations, pendingMigrations } from '../config.ts';
 import { insertSourceLink } from './InsertSourceLink.ts';
 
 export function registerCommands(codeport: CodePort): vscode.Disposable[] {
@@ -28,13 +27,23 @@ export function registerCommands(codeport: CodePort): vscode.Disposable[] {
     vscode.commands.registerCommand('codeport.insertSourceLink', () => insertSourceLink(codeport)),
 
     vscode.commands.registerCommand('codeport.rebuildIndex', async () => {
-      const stats = await codeport.rebuildIndex();
-      if (!stats) return;
-      void vscode.window.showInformationMessage(
-        `CodePort: indexed ${stats.indexedFiles} file(s), ${stats.symbols} symbol(s) ` +
-          `in ${(stats.durationMs / 1000).toFixed(1)}s (${stats.unchangedFiles} unchanged, ` +
-          `${stats.removedFiles} removed).`
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!root) {
+        void vscode.window.showInformationMessage('CodePort: open a folder first.');
+        return;
+      }
+      // CodeGraph owns the index now, so CodePort never rebuilds it itself — it
+      // reports state and hands over the command that does.
+      const command = `codegraph index ${root}`;
+      const summary = await codeport.graphSummary(root);
+      const choice = await vscode.window.showInformationMessage(
+        summary
+          ? `CodeGraph index at ${summary.root} (${summary.fileCount} file(s)). ` +
+              `Rebuild it with: ${command}`
+          : `No CodeGraph index covers ${root}. Build one with: ${command}`,
+        'Copy Command'
       );
+      if (choice === 'Copy Command') await vscode.env.clipboard.writeText(command);
     }),
 
     vscode.commands.registerCommand('codeport.showIndexStats', async () => {
@@ -46,39 +55,25 @@ export function registerCommands(codeport: CodePort): vscode.Disposable[] {
 
       const lines: string[] = [];
       for (const root of roots) {
-        const stats = codeport.indexStats(root);
-        if (!stats) {
-          lines.push(`${root}: index not built yet`);
+        const summary = await codeport.graphSummary(root);
+        if (!summary) {
+          lines.push(`${root}: no CodeGraph index (run "codegraph index ${root}")`);
           continue;
         }
         lines.push(
-          `${root}: ${stats.files} file(s), ${stats.symbols} symbol(s), ` +
-            `${stats.references} reference(s), ${stats.includes} include(s), schema v${stats.schemaVersion}`
+          `${root}: graph at ${summary.root} — ${summary.fileCount} file(s), ` +
+            `${summary.nodeCount} node(s), ${summary.edgeCount} edge(s), ` +
+            `${(summary.dbSizeBytes / 1024 / 1024).toFixed(1)} MB`
         );
       }
 
       const detail = lines.join('\n');
-      codeport.logger.section('index statistics');
+      codeport.logger.section('codegraph statistics');
       codeport.logger.info(detail);
-      const choice = await vscode.window.showInformationMessage(detail, 'Show Log', 'Rebuild Index');
+      const choice = await vscode.window.showInformationMessage(detail, 'Show Log');
       if (choice === 'Show Log') codeport.logger.show();
-      if (choice === 'Rebuild Index') await codeport.rebuildIndex();
     }),
 
     vscode.commands.registerCommand('codeport.showLog', () => codeport.logger.show()),
-
-    vscode.commands.registerCommand('codeport.migrateSettings', async () => {
-      const pending = pendingMigrations();
-      if (pending.length === 0) {
-        void vscode.window.showInformationMessage(
-          'CodePort: nothing to migrate (no mdCodeLinks.* settings found, or codeport.* is already set).'
-        );
-        return;
-      }
-      const written = await applyMigrations(pending);
-      void vscode.window.showInformationMessage(
-        `CodePort: migrated ${written} setting(s): ${pending.map((entry) => entry.to).join(', ')}`
-      );
-    }),
   ];
 }

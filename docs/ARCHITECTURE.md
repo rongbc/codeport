@@ -2,107 +2,78 @@
 
 > **English** · [简体中文](ARCHITECTURE.zh-CN.md)
 
-This document describes the design CodePort converged on, **as actually built**. Two earlier proposals
-shaped it: one for a renamed, adapter-based architecture (CodeNav) and one for a dual engine combining a
-local index with language servers (CodePort). What follows is the merged, implemented result.
+This document describes the design CodePort converged on, **as actually built**. It replaced an earlier
+design that combined a local tree-sitter index with the project's language servers; that design is
+preserved in git history and summarised under [What changed](#what-changed).
 
 The guiding principle:
 
-> CodePort does not understand every programming language. It delegates that understanding to language
-> servers and to a local index, and never lets either one own the answer.
+> CodePort does not understand every programming language, and it does not try. It delegates that
+> understanding to a code graph — CodeGraph — and owns only the part that is genuinely CodePort's job:
+> deciding what a Markdown mention *means*, and turning an answer into an editor navigation target.
 
 ## Layers
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│ Markdown                                                 │
-│   `nx_start()`   `foo()`   `Bar`                         │
-└───────────────────────┬──────────────────────────────────┘
-                        ▼
-┌──────────────────────────────────────────────────────────┐
-│ markdown/     MarkdownParser, CodeBlock, CodeSpan        │
-│               → SymbolReference { name, range, language }│
-└───────────────────────┬──────────────────────────────────┘
-                        ▼
-┌──────────────────────────────────────────────────────────┐
-│ core/         CodePort facade, ProjectManager,           │
-│               LanguageManager, IndexService              │
-│               → ResolveContext { symbol, language, project│
-└───────────────────────┬──────────────────────────────────┘
-                        ▼
-┌──────────────────────────────────────────────────────────┐
-│ resolution/   ResolverPipeline + Policy + Confidence     │
-│                                                          │
-│      ┌──────────────┐            ┌──────────────┐        │
-│      │ IndexResolver│            │  LspResolver │        │
-│      └──────┬───────┘            └──────┬───────┘        │
-└─────────────┼───────────────────────────┼────────────────┘
-              ▼                           ▼
-┌───────────────────────────┐  ┌──────────────────────────┐
-│ index/   tree-sitter WASM │  │ adapters/  LanguageAdapter│
-│          node:sqlite      │  │            ClangdAdapter  │
-│          .codeport/index.db│ │ project/   ProjectDetector│
-└───────────────────────────┘  └──────────────┬───────────┘
-                                             ▼
-                                   ┌──────────────────────┐
-                                   │ lsp/   LspClient     │
-                                   │        (stdio, JSON- │
-                                   │         RPC framing) │
-                                   └──────────────────────┘
-                                             ▼
-                                    clangd / rust-analyzer / …
+┌────────────────────────────────────────────────────────────┐
+│ Markdown                                                   │
+│   `nx_start()`   `foo()`   `Bar`                           │
+└─────────────────────────┬──────────────────────────────────┘
+                          ▼
+┌────────────────────────────────────────────────────────────┐
+│ markdown/   MarkdownParser, CodeBlock, CodeSpan            │
+│             → SymbolReference { name, range, language }    │
+└─────────────────────────┬──────────────────────────────────┘
+                          ▼
+┌────────────────────────────────────────────────────────────┐
+│ core/       CodePort facade                                │
+│             → ResolveContext { symbol, language, project } │
+└─────────────────────────┬──────────────────────────────────┘
+                          ▼
+┌────────────────────────────────────────────────────────────┐
+│ resolution/ ResolverPipeline → CodegraphResolver           │
+│             Evidence ranking, merge, provenance            │
+└─────────────────────────┬──────────────────────────────────┘
+                          ▼
+┌────────────────────────────────────────────────────────────┐
+│ codegraph/  sdk.ts         locate + load the SDK           │
+│             CodegraphIndex per-root facade over one graph  │
+└─────────────────────────┬──────────────────────────────────┘
+                          ▼
+                  ┌───────────────────┐
+                  │ CodeGraph (ext.)  │
+                  │ .codegraph/       │
+                  │   codegraph.db    │
+                  └───────────────────┘
 ```
 
 A dependency rule holds throughout: **nothing below `core/` imports `vscode`.** The Markdown parser, the
-index, the LSP transport, the adapters and the resolver pipeline are all plain Node modules, which is why
-80 tests can cover them (and the whole extension) without a GUI.
+CodeGraph adapter, the resolver and the index facade are all plain Node modules, which is why the suite
+covers the whole extension — bundle included — without a GUI.
 
 ## Directory layout
 
 ```
 src/
 ├── extension.ts                 activate / deactivate, provider + command registration
-├── constants.ts                 version, channel name, config sections
-├── config.ts                    settings + mdCodeLinks.* migration
+├── constants.ts                 output channel name, graph directory, config sections
+├── config.ts                    settings
 ├── logger.ts                    output channel (off | messages | verbose)
 ├── types.ts                     Position, Range, Location, SymbolReference, SymbolKind
+├── codegraph/
+│   ├── sdk.ts                   find and load an installed CodeGraph (never bundled)
+│   └── CodegraphIndex.ts        per-root graph facade, node → hit mapping, kind + coordinate translation
 ├── core/
-│   ├── CodePort.ts              facade: owns everything, rebuilds the pipeline on config change
-│   ├── ProjectManager.ts        cached project detection
-│   ├── LanguageManager.ts       3-level language strategy + LspTargetProvider
-│   └── IndexService.ts          index lifecycle, file watching, debounced incremental updates
+│   └── CodePort.ts              facade: owns the graphs, the pipeline, the Markdown parse cache
 ├── markdown/
 │   ├── MarkdownParser.ts        code regions → SymbolReference[], symbolAt(), parse cache
 │   ├── CodeBlock.ts             fenced blocks (``` / ~~~), info string → language id
 │   └── CodeSpan.ts              inline code spans (CommonMark backtick-run rules)
-├── lsp/
-│   ├── protocol.ts              the LSP subset used, plus conversions
-│   ├── LspClient.ts             generic stdio client (no language knowledge)
-│   └── LspClientPool.ts         one client per adapter+project, shared startup
-├── adapters/
-│   ├── LanguageAdapter.ts       the interface + default LSP-backed implementations
-│   ├── AdapterRegistry.ts       language id → adapter, honouring user overrides
-│   ├── clangd/ClangdAdapter.ts  binary discovery, argv, seed files
-│   └── index.ts                 built-in adapters + registry factory
-├── project/
-│   ├── Project.ts               { root, adapterId, language, markers, compileCommandsDir }
-│   ├── ProjectDetector.ts       the interface
-│   └── detectors/CppProjectDetector.ts
-├── index/
-│   ├── schema.ts                SQL DDL + schema version
-│   ├── IndexStore.ts            node:sqlite wrapper (lazy, optional, defensive)
-│   ├── TreeSitterParser.ts      WASM runtime + grammar loading
-│   ├── SymbolExtractor.ts       extraction interface + registry
-│   ├── CppExtractor.ts          tree-sitter AST walker for C/C++
-│   ├── Indexer.ts               full scan + incremental sync, yields to the event loop
-│   └── SymbolIndex.ts           per-workspace facade (store + parser + indexer)
 ├── resolution/
 │   ├── Resolver.ts              SymbolResolver, ResolveContext, ResolutionResult, candidate
-│   ├── Confidence.ts            index/LSP weights and scoring
-│   ├── Policy.ts                index-first / lsp-first / index-only / lsp-only + merge
-│   ├── ResolverPipeline.ts      ordered run, per-resolver error isolation
-│   ├── IndexResolver.ts         answers from the index
-│   └── LspResolver.ts           answers through adapters; references/hover at real positions
+│   ├── Ranking.ts               the evidence signals, and the reasons they produce
+│   ├── ResolverPipeline.ts      ordered run, per-resolver error isolation, merge
+│   └── CodegraphResolver.ts     the one engine
 ├── providers/                   Definition, Reference, Hover, DocumentLink providers
 ├── commands/                    insert source link + the command palette entries
 ├── util/                        text, path/glob, language ids, uri conversion
@@ -118,7 +89,7 @@ interface SymbolReference {
   name: string;            // `start` for `nx::start`
   raw: string;             // `nx::start`
   container?: string;      // `nx`
-  language?: string;       // from the fence info string
+  language?: string;       // from the fence info string — the only language signal left
   called?: boolean;        // followed by `(`
   kindHint?: SymbolKind;   // function | macro
   range: Range;            // the identifier itself
@@ -127,192 +98,199 @@ interface SymbolReference {
 }
 ```
 
-The parser only scans fenced code blocks and inline code spans, never prose, and it explicitly skips
-file mentions (`src/main.c:42`) and URLs so those stay owned by the code-link provider.
-
-### Language adapters
-
-```ts
-abstract class LanguageAdapter {
-  readonly id: string;
-  readonly languages: readonly string[];
-  readonly detector: ProjectDetector;
-  abstract serverSpec(project: Project): LspServerSpec;
-  abstract seedFiles(project: Project, limit?: number): readonly SeedFile[];
-  languageId(language: string): string;
-  workspaceSymbol(client, query, container?): Promise<SymbolMatch[]>;   // default: LSP
-  definition(client, uri, position): Promise<Location[]>;               // default: LSP
-  references(client, uri, position, includeDeclaration): Promise<Location[]>; // default: LSP
-  hover(client, uri, position): Promise<string | undefined>;            // default: LSP
-}
-```
-
-The base class implements every capability on top of standard LSP requests, so a new adapter usually only
-provides `serverSpec` and `seedFiles`. `workspaceSymbol` normalises each hit into an `exact` /
-`qualified` / `fuzzy` match, which is what feeds confidence scoring.
+The parser only scans fenced code blocks and inline code spans, never prose, and it explicitly skips file
+mentions (`src/main.c:42`) and URLs so those stay owned by the code-link provider.
 
 ### Resolvers and results
 
 ```ts
 interface SymbolResolver {
-  readonly id: string;                 // 'index' | 'lsp'
-  readonly kind: 'index' | 'lsp';
-  isAvailable(context: ResolveContext): boolean;      // cheap pre-flight
+  readonly id: string;                 // 'codegraph'
+  isAvailable(context: ResolveContext): boolean;      // cheap, synchronous pre-flight
   resolve(context: ResolveContext): Promise<ResolutionResult>;
 }
 
 interface ResolutionResult {
   resolver: string;
-  candidates: ResolutionCandidate[];   // { location, confidence, source, reason, symbol? }
-  confidence: number;                  // best candidate
+  candidates: ResolutionCandidate[];   // { location, rank, source, reason, symbol? }
   durationMs: number;
   error?: string;                      // a failing resolver never fails the jump
 }
 ```
 
-`ResolverPipeline.resolve()` runs the permitted resolvers in policy order, stops as soon as the policy is
-satisfied, records every result, and merges. A resolver that throws is recorded as an `error` and the
-pipeline continues — if the index is broken but clangd works, navigation still works.
+`ResolverPipeline.resolve()` runs the resolvers in order and merges. There is exactly one resolver today,
+so the loop runs once — the seam is kept deliberately: a second opinion later means writing one resolver,
+not touching the providers. A resolver that throws is recorded as an `error` and the pipeline continues.
 
-## Confidence
+## Ranking
 
-The plan gave relative weights; here they are normalised so a fully corroborated hit reaches exactly
-`1.0`, which makes a threshold meaningful.
+There is **no numeric confidence**, and that is a deliberate deletion rather than an omission. The old
+`0..1` score existed to be compared against `codeport.policy.indexAcceptConfidence` in order to decide
+whether to escalate to a language server. With a single engine there is nothing to escalate to, so a
+normalised `0.85` was fake precision: a number that gated nothing while reading like a probability. The
+weights table, the normalisation and `clamp01` went with it.
 
-| Index evidence | Weight |
+What is still load-bearing is **ordering**. When several symbols share a name — overloads, or `static`
+functions in different files — the mention's own evidence decides which one is offered first, because the
+hover shows `candidates[0]` and the Peek list is read top-down. So a candidate carries an integer `rank`:
+agreeing signals minus contradicting ones.
+
+| Signal | Points |
 |---|---|
-| exact name | `+0.50` |
-| name prefix only | `+0.20` |
-| qualifier agrees with `a::b` prefix | `+0.15` |
-| language family agrees with the fence/project | `+0.10` |
-| mention shape agrees with the kind | `+0.15` |
-| exactly one candidate in the workspace | `+0.10` |
-| qualifier contradicts | `−0.20` |
-| language contradicts | `−0.10` |
+| exact name (a prefix match earns none) | `+1` |
+| qualifier agrees with the `a::b` prefix | `+1` |
+| language family agrees with the fence | `+1` |
+| mention shape agrees with the kind | `+1` |
+| qualifier contradicts | `−1` |
+| language contradicts | `−1` |
 
-| Language-server match | Confidence |
-|---|---|
-| `workspace/symbol`, qualified | `0.95` |
-| `workspace/symbol`, exact | `0.92` |
-| `workspace/symbol`, partial | `0.60` |
-| `textDocument/definition` | `0.98` |
-| `textDocument/references` | `0.92` |
+A fully corroborated hit therefore ranks `4`; a bare `` `nx_start` `` with no fence ranks `1`.
+
+Three properties are choices rather than accidents:
+
+- **Contradictions subtract; they never reject.** `sameLanguageFamily` is false for every language outside
+  its table, so a fence written ```` ```text ```` would otherwise look like a contradiction and silently
+  drop every candidate. A demoted candidate still appears in the Peek list — at the bottom.
+- **The match type never varies inside one result set.** `CodegraphIndex.query` returns the exact hits when
+  there are any, otherwise the prefix hits, never a mix. The exact/prefix point therefore only shows up in
+  the hover text today; it stays a point rather than a tie-break so an exact hit would still outrank an
+  equally-evidenced prefix hit if a second engine ever merged both.
+- **There is no "uniqueness" term.** It used to contribute `+0.10` when only one candidate existed, which
+  describes the result set rather than giving evidence about *which* candidate is right, so it cannot order
+  anything.
+
+The hover renders the reasons verbatim, and they are the whole explanation:
+
+```
+nx_start — nx · function
+
+void nx_start(void)
+
+a.c:7
+codegraph · exact name, language c, kind function
+```
 
 Language agreement is compared by **family**, not by exact id: a project whose build language is `cpp`
 contains `.c` files, and that is not a contradiction. Families live in `util/language.ts`.
 
-Consequences, and they are deliberate:
+One consequence of the language signal being fence-only: a bare `` `nx_start` `` with no fence ranks `1`
+where the old design scored it `0.70`, because a three-level strategy could infer the language from the
+document's project. That changes ordering and the hover line, not whether a jump works.
 
-- ```` ```c ```` + `` `nx_start()` `` → `0.85` (exact, family, kind, unique) → served from the index, no
-  server call.
-- `` `nx_start` `` bare → `0.70` → the server is consulted.
-- a prefix match can never exceed `0.75` → always confirmed.
+## The CodeGraph integration
 
-## Policies
+CodeGraph is an **external tool**, treated exactly the way `clangd` was: CodePort never bundles it. The
+per-platform bundle carries its own Node runtime (`node` alone is ~123 MB; the npm package unpacks to
+~292 MB), so vendoring it into a `.vsix` is not an option. `src/codegraph/sdk.ts` finds an installed copy
+and loads it **in-process**:
 
-`index-first` (default) stops after the index when there is exactly one candidate at or above
-`codeport.policy.indexAcceptConfidence` (0.85). `lsp-first` stops as soon as the server answers.
-`index-only` and `lsp-only` restrict `order()` to one engine. Merging de-duplicates by
-`uri:line:character`, keeps the highest confidence, and ranks descending — so a server hit (≥ 0.92)
-outranks an unconfirmed index hit with no special-casing.
+- candidates, in order: the `codeport.codegraph.path` setting, `CODEGRAPH_SDK_PATH`, the project's
+  `node_modules`, the extension's own `node_modules`, then the usual global prefixes;
+- the package is CommonJS whose `module.exports` is assigned dynamically, so a dynamic `import()` yields
+  everything under `default`; the loader normalises that;
+- a load attempt that fails falls through to the next candidate, so a broken install in one prefix cannot
+  shadow a working one in another.
 
-## The index
+Why in-process rather than a CLI or the MCP server: measured on a 46-file TypeScript project, loading the
+SDK costs ~72 ms once, opening a graph ~5 ms, and an exact name lookup is sub-millisecond. There is no
+daemon, no socket and no IPC on the query path. The CLI equivalent is ~180 ms per call because every
+invocation re-execs a runtime.
 
-Schema (`index/schema.ts`), line/column zero-based:
+### What CodeGraph gives CodePort
 
-```sql
-files(id, path UNIQUE, language, size, mtime, hash)
-symbols(id, file_id→files, name, qualified_name, kind, container,
-        line, column, end_line, end_column, signature)
-symbol_references(id, file_id→files, symbol_id→symbols, name, kind, line, column)
-includes(id, file_id→files, target)
-meta(key, value)   -- schema_version
-```
+| Need | CodeGraph API |
+|---|---|
+| all definitions of a name, uncapped | `getNodesByName` (documented as enumerating every overload) |
+| weak mentions | `getNodesByNamePrefix` |
+| exact location | `Node.startLine` / `endLine` / `startColumn` / `endColumn` |
+| hover text | `Node.signature`, else `getCode` (reads the file) |
+| Find All References | `findUsages` — edges carry the **line and column of the call site** |
+| freshness | `isInitialized`, `getStats` |
 
-The table is named `symbol_references`, not `references`, because the latter is a SQL keyword that would
-need quoting everywhere.
+### Two conversions that live in one place
 
-- **On disk**: `.codeport/index.db` (SQLite in WAL mode). The same directory receives a generated
-  `.codeport/.gitignore`, so the cache is never committed.
-- `Indexer.fullIndex()` walks the workspace (skipping symlinks and excludes), loads each needed grammar
-  once, then re-parses only files whose SHA-1 content hash changed, and prunes rows for deleted files.
-- `Indexer.indexPaths()` is the incremental path used by the watcher: create/change/delete events from
-  the workspace `FileSystemWatcher` are applied in 500 ms batches.
-- One file is one transaction, so a parse failure cannot corrupt the index.
-- Parsing and `node:sqlite` are synchronous, so the loop yields to the event loop every 25 files; that is
-  what keeps the extension host responsive on a large workspace.
-- `schema_version` mismatch → drop and recreate. The index is a cache.
-- **Workspace-scoped, not project-scoped.** `IndexService` builds an index for a workspace folder
-  without consulting project detection, because the index needs no build system: `compile_commands.json`
-  is a requirement of *clangd*, not of CodePort. Only the language server is gated on a detected project
-  (`compile_commands.json` / `.clangd`). `startInBackground()` is idempotent per root, so the resolver
-  can call it on demand (`index.prewarm = false`) without queueing duplicate scans. Gating the index on
-  project detection was a real defect: without either marker the index was never populated and every
-  lookup failed — `test/degradation.test.ts` guards against it.
+`CodegraphIndex.toHit` is the only place these are handled, and both are the kind of mistake that sends a
+jump to the wrong place instead of failing loudly — so both are pinned by tests:
 
-### Why tree-sitter *and* clangd
+1. CodeGraph reports **1-based lines** and **0-based columns**. CodePort is 0-based, so lines shift by one.
+2. CodeGraph reports `filePath` **relative to the project root**, not absolute. It is resolved against the
+   graph root, never against the process working directory.
 
-tree-sitter recovers structure: functions, methods, aggregates, enum members, typedefs, aliases,
-variables, fields, namespaces, macros, includes. It cannot decide what `foo(x)` means — that is overload
-resolution, template instantiation and macro expansion, which is exactly what the language server is for.
-The index gives speed and offline coverage; the server gives correctness. Neither is asked to do the
-other's job.
+The graph root itself is found by walking up from a file looking for `.codegraph/codegraph.db`,
+reimplemented locally (rather than through the SDK) so that `isAvailable()` stays synchronous and correct
+before the SDK has been loaded.
 
-| | CodePort Index | Language server |
-|---|---|---|
-| Speed | milliseconds, no server needed | depends on the server / its own index |
-| Works offline | yes | needs the server |
-| C++ overloads, templates, macros, conditional compilation | no | yes |
-| Cost | tree-sitter parse + a tiny SQLite database | full compiler-grade parse |
+### Capability boundary
 
-## Language detection (3 levels)
+CodeGraph's graph is **structural**, the same class of answer tree-sitter used to give — broader and
+faster, not more semantic. What that costs:
 
-1. **Fence info string** — ```` ```c ```` is the strongest signal; the adapter is chosen from it (with
-   `codeport.languages` overrides).
-2. **Document context** — the document's own project: `docs/` inside a CMake tree is still C/C++.
-3. **Workspace fallback** — try every project in the workspace. If nothing answers, report
-   *no definition found*. CodePort never guesses.
+| | CodeGraph |
+|---|---|
+| file count / speed | milliseconds, no build system needed |
+| languages | broad (36 in the version tested) |
+| overloads, templates, conditional compilation | **no** — resolved by name and import, not semantically |
+| preprocessor macros | **no node kind at all** — a `#define` name cannot be a jump target |
+| Find All References | a static call/reference graph, not a semantic one |
 
-Implemented in `core/LanguageManager.ts`, which also implements `LspTargetProvider`. That injection is why
-`resolution/LspResolver.ts` contains no workspace or configuration logic.
+The macro gap is the one outright regression against the retired design, which extracted `#define` names
+with its own tree-sitter walker. The Definition provider's "not found" hint says so explicitly.
 
-## Adding a language
+## Path / line links
 
-1. `project/detectors/RustProjectDetector.ts` — implement `ProjectDetector` (look for `Cargo.toml`).
-2. `adapters/rust/RustAnalyzerAdapter.ts` — extend `LanguageAdapter`: `id`, `languages`, `detector`,
-   `serverSpec`, `seedFiles`. Add `rust` to the `GRAMMARS` list in `scripts/build.mjs` and write a
-   `RustExtractor` if the local index should cover it.
-3. Register it in `adapters/index.ts`.
+Path links are the half of the extension that never touched the symbol engine, and they still do not.
+`providers/DocumentLinkProvider.ts` is a regex plus `fs.statSync`; it calls `CodePort` exactly once, for
+configuration. It scans the **whole document text**, not just code spans, and resolves targets as
+absolute → workspace-root-relative → (optionally) relative to the Markdown file.
 
-Nothing else changes: the core, the resolver pipeline, the policies, the providers, the index store and
-the commands are language-agnostic. If you skip step 2's extractor, Rust still works through
-rust-analyzer alone — `SymbolIndex.create` simply reports fewer supported languages.
+That independence is deliberate and now enforced by tests: path links are asserted to keep working when
+CodeGraph is absent, unopenable, or healthy.
 
-## Deviations from the original proposals, and why
+## Settings
 
-| Original proposal | As built | Reason |
-|---|---|---|
-| Name `CodeNav` (earlier proposal) | `CodePort` (later proposal) | The later proposal superseded the earlier one, and "dual engine" is the more accurate description. |
-| SQLite via a driver | Node's built-in `node:sqlite` | VS Code 1.130 bundles Node 24, so real SQLite needs no native module, no `electron-rebuild`. Detected defensively: absent → index disabled, LSP-only. |
-| Tree-sitter via native bindings | `@vscode/tree-sitter-wasm` (WASM) | No ABI coupling to VS Code's Node; assets are copied into `dist/wasm/` so the package is self-contained. |
-| `references` table | `symbol_references` | `references` is a SQL keyword. |
-| Call/inheritance graphs | not built | Explicitly out of scope in the later proposal: they would turn a navigation aid into a code-intelligence engine. |
-| Weight numbers | normalised to sum to 1.0 | The proposals' example weights did not reach their own 0.90 accept threshold. |
-| `confidence >= 0.90` accept | `0.85`, configurable | At 0.90 the index fast path is nearly unreachable, making the index pointless. |
-| Tree-sitter "C" grammar | C++ grammar for `.c` | `@vscode/tree-sitter-wasm` ships no plain C grammar; the C++ grammar is a superset. |
+The settings that configured the retired index and clangd tiers are gone — CodeGraph owns both jobs, and
+its configuration lives in the project's `codegraph.json` and `.codegraph/` directory, not in VS Code.
+
+| Setting | Purpose |
+|---|---|
+| `codeport.enabled` | master switch |
+| `codeport.definition.enabled` | go-to-definition |
+| `codeport.references.enabled` | Find All References |
+| `codeport.hover.enabled` | hover |
+| `codeport.codeLink.enabled` | path/line links |
+| `codeport.codeLink.resolveRelativeToMarkdownFile` | also resolve path links next to the note |
+| `codeport.codegraph.path` | where CodeGraph is installed (empty = auto-detect) |
+| `codeport.trace` | log level |
 
 ## Testing
 
 | File | Covers |
 |---|---|
 | `test/markdown.test.ts` | inline/fenced extraction, keyword and path/URL skipping, CommonMark backtick rules, cursor resolution |
-| `test/cpp-extractor.test.ts` | symbol kinds, containers, signatures, includes, references, elaborated-type-reference regression |
-| `test/index-store.test.ts` | schema, exact/prefix queries, `LIKE` escaping, cascade deletes, pruning, on-disk persistence |
-| `test/confidence-policy.test.ts` | weights, thresholds, families, policy ordering, merge ranking, pipeline fast path, escalation, error isolation, cancellation |
-| `test/lsp-client.test.ts` | real JSON-RPC framing over a mock server: handshake, multi-byte UTF-8, server→client requests, spawn failure, pool reuse |
-| `test/activation.test.ts` | **the real esbuild bundle** on a stubbed VS Code API and a temporary C project: provider/command registration, index build, definition, hover provenance, references through real clangd, clean shutdown |
-| `test/architecture.test.ts` | the enforced invariants: nothing below `core/` imports `vscode`, no TypeScript parameter properties, adapter contracts, policy ids match the settings enum, and contributed/registered/read settings stay consistent |
-| `test/degradation.test.ts` | **no build system and no language server**: the index is still built from the workspace alone, definition/hover/link work, a weak mention that escalates to a dead server still resolves from the index, and Find All References reports nothing rather than guessing |
+| `test/codegraph.test.ts` | the two coordinate/path conversions, kind mapping, container derivation, graph discovery, SDK lookup and loading, the per-root index cache |
+| `test/resolution.test.ts` | every ranking signal and contradiction, kinds/qualifier agreement, merge ordering, pipeline error isolation and cancellation, the resolver end to end over a fixture graph |
+| `test/activation.test.ts` | **the real esbuild bundle** on a stubbed VS Code API and a temporary project: provider/command registration, definition, hover provenance, hover source fallback, references with exact call sites, **path links** |
+| `test/degradation.test.ts` | no index, an unopenable index, a macro that cannot be indexed, and path links in all three states |
+| `test/architecture.test.ts` | the enforced invariants: nothing below `core/` imports `vscode`, no TypeScript parameter properties, CodeGraph is never statically imported, contributed/registered/read settings stay consistent |
 
-`test/activation.test.ts` intentionally uses the built bundle rather than the sources, so a broken build
-or a missing WASM asset fails the suite.
+Tests reach CodeGraph through `test/fixtures/fake-codegraph-sdk.js` and
+`fake-codegraph-sdk-broken.js` (`CODEGRAPH_SDK_PATH`), so the suite neither needs nor is affected by a
+real CodeGraph install. `test/activation.test.ts` and `test/degradation.test.ts` intentionally run the
+built bundle rather than the sources, so a broken build fails the suite.
+
+## What changed
+
+The previous architecture ran two interchangeable engines — a local tree-sitter index in
+`.codeport/index.db` and the project's language server (clangd first) — and a policy decided how to
+combine them.
+
+| Then | Now | Why |
+|---|---|---|
+| tree-sitter WASM + `node:sqlite` index (1810 lines) | CodeGraph graph, read-only | broad language coverage without one extractor per language; a shared index the rest of the toolchain can use too |
+| clangd via a hand-written LSP client (1073 lines) | removed | CodeGraph answers references and hover; keeping a compiler-grade tier was out of scope for the chosen direction |
+| four resolution policies | one deterministic merge | a single engine has nothing to trade off against |
+| three-level language detection | the fence info string | CodeGraph detects language per file itself |
+| project detection to decide whether to start a server | removed | the only consumer was clangd |
+| ~5.4 MB of WASM assets in the `.vsix` | nothing | CodeGraph loads its own parsers |
+| a normalised `0..1` confidence score | an integer evidence rank | with one engine there is no threshold left to compare a score against, so the number gated nothing |
+| a `mdCodeLinks.*` settings migration | removed | CodePort is pre-1.0 and the one legacy key that had a destination is gone |
