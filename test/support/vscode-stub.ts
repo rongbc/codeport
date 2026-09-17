@@ -19,6 +19,8 @@ export interface StubOptions {
   readonly settings?: Record<string, unknown>;
   /** Absolute path the extension "lives" at (so `dist/wasm` resolves). */
   readonly extensionPath: string;
+  /** What `vscode.workspace.isTrusted` reports. Defaults to trusted. */
+  readonly trusted?: boolean;
 }
 
 export interface StubState {
@@ -193,6 +195,7 @@ export function installVscodeStub(options: StubOptions): StubHandle {
     ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
     workspace: {
       workspaceFolders: [folder],
+      isTrusted: options.trusted ?? true,
       getWorkspaceFolder: (uri: Uri) =>
         uri.fsPath.startsWith(options.workspaceRoot) ? folder : undefined,
       getConfiguration,

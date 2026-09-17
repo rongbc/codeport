@@ -65,7 +65,7 @@ export class CodePort {
   initialize(): void {
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration(CONFIG_SECTION)) this.onConfigurationChanged(event);
+        if (event.affectsConfiguration(CONFIG_SECTION)) this.onConfigurationChanged();
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.graphs.closeAll();
@@ -85,7 +85,7 @@ export class CodePort {
       languages.length > 0
         ? `CodeGraph ready for ${languages.length} language(s); resolver=${this.pipeline.resolverIds().join(',')}`
         : 'CodeGraph was not found; install it (npm i -g @colbymchenry/codegraph) ' +
-            'or point codeport.codegraph.path at it'
+            'so that `codegraph` is on PATH'
     );
   }
 
@@ -96,12 +96,18 @@ export class CodePort {
     return this.configCache;
   }
 
+  /**
+   * The SDK search is entirely CodeGraph's own doing — CodePort has no setting for
+   * where it lives, because the extension is useless without the tool and an
+   * installed CLI is what puts it on `PATH`. The one thing the search must know is
+   * whether the workspace is trusted: a repository ships its own `node_modules`,
+   * and importing an SDK from there would run repository code in the extension host.
+   */
   private createIndexService(): CodegraphIndexService {
-    const config = this.getConfig();
     return new CodegraphIndexService({
       sdk: {
-        configuredPath: config.codegraphPath || undefined,
         extensionPath: this.context.extensionPath,
+        workspaceTrusted: vscode.workspace.isTrusted,
       },
     });
   }
@@ -120,19 +126,9 @@ export class CodePort {
     );
   }
 
-  private onConfigurationChanged(event: vscode.ConfigurationChangeEvent): void {
+  private onConfigurationChanged(): void {
     this.configCache = undefined;
-    const config = this.getConfig();
-    this.logger.setLevel(config.trace);
-
-    // A new `codegraph.path` invalidates every open graph: they were opened
-    // through the previous SDK.
-    if (event.affectsConfiguration(`${CONFIG_SECTION}.codegraph.path`)) {
-      this.graphs.closeAll();
-      this.graphs = this.createIndexService();
-      this.logger.info('codegraph.path changed; open graphs closed');
-    }
-    this.pipeline = this.createPipeline();
+    this.logger.setLevel(this.getConfig().trace);
   }
 
   /* --------------------------- document access --------------------------- */

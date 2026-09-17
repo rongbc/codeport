@@ -311,7 +311,7 @@ const RESOLVER_FIXTURE = {
 
 async function resolverFor(): Promise<{ resolver: CodegraphResolver; service: CodegraphIndexService }> {
   process.env.CODEGRAPH_SDK_PATH = FAKE_SDK;
-  const service = new CodegraphIndexService({ sdk: { configuredPath: FAKE_SDK } });
+  const service = new CodegraphIndexService();
   const resolver = new CodegraphResolver({
     lookup: (key) => service.lookup(key),
     open: (key) => service.open(key),

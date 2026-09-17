@@ -133,22 +133,28 @@ test('the CodeGraph index caches are excluded from the package', () => {
   }
 });
 
-test('the CodeGraph SDK path setting is restricted in untrusted workspaces', () => {
-  // `codeport.codegraph.path` is not just a hint: CodePort `import()`s the module
-  // it points at. A workspace ships `.vscode/settings.json`, so without this a
-  // repository could execute arbitrary code in the extension host the moment a
-  // user opened it. VS Code only returns the user-defined value for settings
-  // listed here when the workspace is in Restricted Mode, which is what makes
-  // `supported: 'limited'` an honest declaration rather than a claim.
+test('an untrusted workspace never loads a CodeGraph SDK from the workspace', () => {
+  // CodePort `import()`s the SDK it finds, so the three places one can come from
+  // matter. A user-set path setting used to be the vector, and VS Code could
+  // restrict that setting; it is gone, and the setting must not come back. What
+  // remains is the workspace's own `node_modules`, which a repository controls —
+  // `candidateSdkEntries` skips it when `workspaceTrusted` is false (behaviour
+  // checked in test/codegraph.test.ts), and CodePort has to pass the real flag.
   const packageJson = JSON.parse(
     fs.readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')
   );
-  const untrusted = packageJson.capabilities?.untrustedWorkspaces;
-  assert.equal(untrusted?.supported, 'limited');
-  assert.ok(
-    Array.isArray(untrusted?.restrictedConfigurations) &&
-      untrusted.restrictedConfigurations.includes('codeport.codegraph.path'),
-    'codeport.codegraph.path must be listed in restrictedConfigurations'
+  assert.equal(packageJson.capabilities?.untrustedWorkspaces?.supported, 'limited');
+  assert.equal(
+    packageJson.contributes.configuration.properties['codeport.codegraph.path'],
+    undefined,
+    'the SDK path setting must stay deleted: the CLI is found on PATH'
+  );
+
+  const core = fs.readFileSync(path.join(SRC, 'core', 'CodePort.ts'), 'utf8');
+  assert.match(
+    core,
+    /workspaceTrusted:\s*vscode\.workspace\.isTrusted/,
+    'CodePort must pass the workspace trust flag to the SDK search'
   );
 });
 

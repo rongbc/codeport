@@ -104,7 +104,7 @@ cd <your-project>
 codegraph index
 ```
 
-That creates `<your-project>/.codegraph/codegraph.db`. CodePort finds it by walking up from the file being edited, so opening a subdirectory of an indexed project works. If `codegraph` lives somewhere unusual, point `codeport.codegraph.path` at it.
+That creates `<your-project>/.codegraph/codegraph.db`. CodePort finds it by walking up from the file being edited, so opening a subdirectory of an indexed project works. The install also puts `codegraph` on `PATH`, which is where CodePort loads the SDK from — there is nothing to configure.
 
 > **Use the official npm registry.** Mirrors such as npmmirror do not carry CodeGraph's per-platform package, and npm treats an unfetchable optional dependency as success — you get an install that reports success and then segfaults on first use.
 
@@ -171,8 +171,9 @@ With the cursor on `` `nx_start()` `` or on `nxsched_add_readytorun`, **F12** op
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `codeport.codegraph.path` | `""` | Path to an installed CodeGraph: the package directory, the `npm-sdk.js` entry, or the `codegraph` CLI. Empty = auto-detect (the project's `node_modules`, then the usual global prefixes). |
 | `codeport.trace` | `messages` | Log level for the CodePort output channel (`off` still reports warnings and errors). |
+
+There is no setting for where CodeGraph lives. CodePort is useless without the tool, so `codegraph` is expected on `PATH` — that is what `npm i -g @colbymchenry/codegraph` provides. A project-local `node_modules` install is preferred when the workspace is trusted.
 
 Everything else about indexing — which files, which languages, what to ignore — is CodeGraph's own configuration (`codegraph.json` in the project root, and `.codegraph/`). See its documentation.
 
@@ -229,7 +230,7 @@ The full design — layers, the ranking signals, the two coordinate conversions 
 ## Troubleshooting
 
 - **"no definition found"** — Open **CodePort: Show Log**. Common causes, in order of likelihood: the folder has no CodeGraph index (`codegraph index <folder>`); the name is a preprocessor macro, which CodeGraph does not model; the name is genuinely not in the graph.
-- **"CodeGraph was not found"** — No installed SDK was located. Install it (`npm i -g @colbymchenry/codegraph`), or set `codeport.codegraph.path`.
+- **"CodeGraph was not found"** — No installed SDK was located. Install it (`npm i -g @colbymchenry/codegraph`): CodePort finds a global install through `PATH`, nvm's per-version prefixes included, and there is no setting to point it anywhere else.
 - **A jump went to the wrong place** — Hover the symbol: the provenance line names the evidence. If a name is ambiguous, prefer the qualified form in your notes (`` `nx::start()` `` rather than `` `start()` ``), which raises the rank of the right candidate.
 - **Stale results after a big refactor** — Run `codegraph sync` (or `codegraph index`) in that project. CodePort reads the graph as-is and never writes to it.
 

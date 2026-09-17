@@ -146,27 +146,105 @@ test('findGraphRoot returns undefined when nothing above has a graph', () => {
 
 /* ------------------------------ SDK location ------------------------------ */
 
-test('candidateSdkEntries offers both readings of a configured path, override first', () => {
-  process.env.CODEGRAPH_SDK_PATH = '/from-env/npm-sdk.js';
-  const entries = candidateSdkEntries({ configuredPath: '/from-setting', workspaceRoot: '/ws' });
+test('candidateSdkEntries offers both readings of the env escape hatch, first', () => {
+  process.env.CODEGRAPH_SDK_PATH = '/from-env';
+  const entries = candidateSdkEntries({
+    workspaceRoot: '/ws',
+    pathEnv: '',
+    homeDir: scratch(),
+    nvmDir: scratch(),
+  });
 
-  // A setting that is not a `.js` file could be a package directory or the CLI
-  // binary; both readings are offered so the loader can pick the one that exists.
-  assert.equal(entries[0], path.join('/from-setting', 'npm-sdk.js'));
+  // A value that is not a `.js` file could be a package directory or the CLI binary;
+  // both readings are offered so the loader can pick the one that exists.
+  assert.equal(entries[0], path.join('/from-env', 'npm-sdk.js'));
   assert.ok(entries.includes(path.join('/', 'npm-sdk.js')), 'the sibling reading must be offered too');
 
   // The env override beats the workspace, which beats a global prefix.
-  const envIndex = entries.indexOf('/from-env/npm-sdk.js');
   const workspaceIndex = entries.indexOf(
     path.join('/ws', 'node_modules', '@colbymchenry', 'codegraph', 'npm-sdk.js')
   );
-  assert.ok(envIndex > 0);
-  assert.ok(workspaceIndex > envIndex, 'the workspace copy must come after the override');
+  assert.ok(workspaceIndex > 1, 'the workspace copy must come after the override');
 });
 
 test('candidateSdkEntries accepts an explicit .js entry unchanged', () => {
-  const entries = candidateSdkEntries({ configuredPath: '/opt/cg/npm-sdk.js' });
+  process.env.CODEGRAPH_SDK_PATH = '/opt/cg/npm-sdk.js';
+  const entries = candidateSdkEntries({ pathEnv: '', homeDir: scratch(), nvmDir: scratch() });
   assert.equal(entries[0], '/opt/cg/npm-sdk.js');
+});
+
+/* ------------------------------ SDK discovery ------------------------------ */
+
+/**
+ * Build a fake global npm prefix the way npm lays one out: the package under
+ * `lib/node_modules`, and `<prefix>/bin/codegraph` as a symlink to its CLI shim.
+ */
+function globalInstall(base: string): { readonly bin: string; readonly sdk: string; readonly shim: string } {
+  const pkg = path.join(base, 'prefix', 'lib', 'node_modules', '@colbymchenry', 'codegraph');
+  fs.mkdirSync(pkg, { recursive: true });
+  fs.writeFileSync(path.join(pkg, 'npm-shim.js'), '// CLI launcher, execs its own Node\n');
+  fs.writeFileSync(path.join(pkg, 'npm-sdk.js'), '// SDK\n');
+  const bin = path.join(base, 'prefix', 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.symlinkSync(path.join(pkg, 'npm-shim.js'), path.join(bin, 'codegraph'));
+  return { bin, sdk: path.join(pkg, 'npm-sdk.js'), shim: path.join(pkg, 'npm-shim.js') };
+}
+
+test('a bare command name in the env escape hatch resolves through PATH, not the shim', () => {
+  const install = globalInstall(scratch());
+  process.env.CODEGRAPH_SDK_PATH = 'codegraph';
+  const entries = candidateSdkEntries({
+    pathEnv: install.bin,
+    homeDir: scratch(),
+    nvmDir: scratch(),
+  });
+  // The shim *execs* a bundled Node; importing it in-process would run the CLI.
+  assert.equal(entries[0], install.sdk);
+});
+
+test('a global install is found with no setting at all', () => {
+  const install = globalInstall(scratch());
+  const entries = candidateSdkEntries({ pathEnv: install.bin, homeDir: scratch(), nvmDir: scratch() });
+  assert.ok(entries.includes(install.sdk), `PATH install missing from: ${entries.join(', ')}`);
+});
+
+test('an untrusted workspace never supplies the SDK from its own node_modules', () => {
+  // The workspace copy is repository content, and this path ends in an `import()`.
+  const options = { workspaceRoot: '/ws', pathEnv: '', homeDir: scratch(), nvmDir: scratch() } as const;
+  const workspaceEntry = path.join('/ws', 'node_modules', '@colbymchenry', 'codegraph', 'npm-sdk.js');
+
+  assert.ok(candidateSdkEntries(options).includes(workspaceEntry), 'trusted by default');
+  assert.ok(
+    !candidateSdkEntries({ ...options, workspaceTrusted: false }).includes(workspaceEntry),
+    'an untrusted workspace must fall back to the installs the user controls'
+  );
+});
+
+test('an nvm install is found when PATH carries no codegraph', () => {
+  const home = scratch();
+  const pkg = path.join(home, '.nvm', 'versions', 'node', 'v24.21.0', 'lib', 'node_modules', '@colbymchenry', 'codegraph');
+  fs.mkdirSync(pkg, { recursive: true });
+  fs.writeFileSync(path.join(pkg, 'npm-sdk.js'), '// SDK\n');
+
+  const entries = candidateSdkEntries({ pathEnv: '', homeDir: home, nvmDir: path.join(home, '.nvm') });
+  assert.ok(entries.includes(path.join(pkg, 'npm-sdk.js')));
+});
+
+test('the newest nvm Node version is offered first', () => {
+  const home = scratch();
+  const sdkOf = (version: string): string => {
+    const pkg = path.join(home, '.nvm', 'versions', 'node', version, 'lib', 'node_modules', '@colbymchenry', 'codegraph');
+    fs.mkdirSync(pkg, { recursive: true });
+    fs.writeFileSync(path.join(pkg, 'npm-sdk.js'), '// SDK\n');
+    return path.join(pkg, 'npm-sdk.js');
+  };
+  const old = sdkOf('v18.20.4');
+  const mid = sdkOf('v22.9.1');
+  const recent = sdkOf('v24.21.0');
+
+  const entries = candidateSdkEntries({ pathEnv: '', homeDir: home, nvmDir: path.join(home, '.nvm') });
+  assert.ok(entries.indexOf(recent) < entries.indexOf(mid), 'v24 must beat v22');
+  assert.ok(entries.indexOf(mid) < entries.indexOf(old), 'v22 must beat v18');
 });
 
 test('loadCodegraphSdk normalises a CommonJS export and caches it', async () => {
@@ -292,7 +370,7 @@ test('opening a directory with no graph fails without throwing', async () => {
 test('the index service caches one open graph per root and closes it', async () => {
   process.env.CODEGRAPH_SDK_PATH = FAKE_SDK;
   const root = fakeGraphRoot(scratch(), FIXTURE);
-  const service = new CodegraphIndexService({ sdk: { configuredPath: FAKE_SDK } });
+  const service = new CodegraphIndexService();
   try {
     assert.equal(service.lookup(root), undefined, 'nothing is open before the first use');
     const [first, second] = await Promise.all([service.open(root), service.open(root)]);

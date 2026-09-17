@@ -24,11 +24,6 @@ export interface CodePortConfig {
   readonly hoverEnabled: boolean;
   readonly codeLinkEnabled: boolean;
   readonly codeLinkRelativeToMarkdown: boolean;
-  /**
-   * Explicit path to an installed CodeGraph: the package directory, the SDK
-   * entry (`npm-sdk.js`), or the CLI binary. Empty means "find it".
-   */
-  readonly codegraphPath: string;
   readonly trace: LogLevel;
 }
 
@@ -44,7 +39,6 @@ export function readConfig(): CodePortConfig {
       'codeLink.resolveRelativeToMarkdownFile',
       false
     ),
-    codegraphPath: config.get<string>('codegraph.path', ''),
     trace: config.get<LogLevel>('trace', 'messages'),
   };
 }

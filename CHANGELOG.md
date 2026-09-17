@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4] - 2026-09-17
+
+### Changed
+
+- **`codeport.codegraph.path` is deleted.** The extension is useless without CodeGraph, so "the tool is
+  installed" is the only fact that matters — and installing it is what puts `codegraph` on `PATH`, which is
+  where the SDK is loaded from now. A project-local `node_modules` install still wins over a global one. The
+  setting was also the only reason `untrustedWorkspaces` needed a `restrictedConfigurations` entry: a
+  repository ships `.vscode/settings.json`, and the setting was an injected `import()` path. With it gone,
+  the remaining repository-controlled candidate — the workspace's own `node_modules` — is skipped unless
+  `vscode.workspace.isTrusted`, so Restricted Mode still means something. `CODEGRAPH_SDK_PATH` stays as an
+  undocumented escape hatch for tests.
+
+### Fixed
+
+- **A global CodeGraph install is found with no setting, nvm included.** The SDK search was a fixed list of
+  prefixes, so `npm i -g @colbymchenry/codegraph` under **nvm** — where every Node version has its own
+  prefix — was invisible: the resolver silently returned nothing, and because a graph *did* exist on disk
+  the miss was reported as a missing index ("run `codegraph index …`") rather than a missing SDK. The search
+  now reads `PATH` (resolving the `codegraph` shim to the package it links into, which also covers fnm,
+  Volta and any custom prefix), then walks nvm's `versions/node/*` installs newest-first for editors started
+  without nvm on `PATH`. A value that points at the CLI shim resolves to the SDK next to it rather than
+  importing the shim itself (which *execs* a bundled Node instead of returning the API).
+  `test/codegraph.test.ts` grew by five tests covering PATH, bare-name, the trust gate, nvm, and
+  newest-version-first discovery.
+
 ## [0.2.3] - 2026-09-17
 
 ### Changed

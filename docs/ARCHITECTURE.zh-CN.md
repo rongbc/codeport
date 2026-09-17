@@ -212,8 +212,12 @@ CodeGraph 是**外部工具**，待遇和以前的 `clangd` 完全一样：CodeP
 运行时（光 `node` 就约 123 MB，npm 包解包约 292 MB），塞进 `.vsix` 不现实。`src/codegraph/sdk.ts`
 负责找到已安装的那份，并**在进程内**加载：
 
-- 候选顺序：`codeport.codegraph.path` 设置、`CODEGRAPH_SDK_PATH`、项目的 `node_modules`、扩展自己的
-  `node_modules`，最后是常见的全局前缀；
+- 候选顺序：`CODEGRAPH_SDK_PATH`（测试用的逃生口，不是用户设置）、项目的 `node_modules`（**仅当工作区
+  可信**）、扩展自己的 `node_modules`、`PATH` 上的全局安装（`codegraph` 命令是指向自身包的软链接，
+  因此 nvm、fnm、Volta 和自定义前缀都能覆盖），最后是常见的全局前缀与 nvm 各版本的安装目录。这里
+  **刻意不提供任何设置项**：没有 CodeGraph 这个扩展就没事可做，而装上 CLI 自然就把它放进了 `PATH`；
+- 工作区的 `node_modules` 是唯一由仓库控制的候选，而查找终点是一次 `import()`，所以 `CodePort` 会把
+  `vscode.workspace.isTrusted` 传下去：不可信工作区只会用用户自己控制的那几份安装；
 - 该包是 CommonJS 且 `module.exports` 是动态赋值，所以动态 `import()` 拿到的东西全在 `default` 上，
   加载器会做归一化；
 - 某个候选加载失败会继续试下一个，因此某个前缀下的坏安装不会遮蔽另一个前缀下的好安装。
@@ -281,7 +285,6 @@ Definition provider 的「找不到」提示会明确指出这一点。
 | `codeport.hover.enabled` | Hover |
 | `codeport.codeLink.enabled` | 路径 / 行号链接 |
 | `codeport.codeLink.resolveRelativeToMarkdownFile` | 同时相对笔记所在目录解析路径链接 |
-| `codeport.codegraph.path` | CodeGraph 安装位置（留空 = 自动探测） |
 | `codeport.trace` | 日志级别 |
 
 ## 测试

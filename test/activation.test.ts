@@ -9,8 +9,8 @@
  *   Markdown text -> parser -> CodegraphResolver -> CodeGraph -> provider
  *                 -> vscode.Location
  *
- * The SDK is injected through `CODEGRAPH_SDK_PATH`, which is also the escape hatch
- * the shipped extension exposes via `codeport.codegraph.path`.
+ * The SDK is injected through `CODEGRAPH_SDK_PATH` — the same escape hatch the
+ * shipped extension honours when the `PATH` lookup is not enough.
  */
 
 import { test, before, after } from 'node:test';

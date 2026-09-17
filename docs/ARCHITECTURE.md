@@ -229,8 +229,15 @@ per-platform bundle carries its own Node runtime (`node` alone is ~123 MB; the n
 ~292 MB), so vendoring it into a `.vsix` is not an option. `src/codegraph/sdk.ts` finds an installed copy
 and loads it **in-process**:
 
-- candidates, in order: the `codeport.codegraph.path` setting, `CODEGRAPH_SDK_PATH`, the project's
-  `node_modules`, the extension's own `node_modules`, then the usual global prefixes;
+- candidates, in order: `CODEGRAPH_SDK_PATH` (an escape hatch for tests, not a user setting), the project's
+  `node_modules` **when the workspace is trusted**, the extension's own `node_modules`, a global install
+  found on `PATH` (the `codegraph` shim is a symlink into its own package, so this covers nvm, fnm, Volta
+  and custom prefixes), then the usual global prefixes and nvm's per-version installs. There is deliberately
+  no setting for any of it: without CodeGraph the extension has nothing to do, and installing the CLI is
+  what puts it on `PATH`;
+- the workspace's `node_modules` is the one candidate a repository controls, and the lookup ends in an
+  `import()`, so `CodePort` passes `vscode.workspace.isTrusted` and an untrusted workspace gets only the
+  installs the user controls;
 - the package is CommonJS whose `module.exports` is assigned dynamically, so a dynamic `import()` yields
   everything under `default`; the loader normalises that;
 - a load attempt that fails falls through to the next candidate, so a broken install in one prefix cannot
@@ -304,7 +311,6 @@ its configuration lives in the project's `codegraph.json` and `.codegraph/` dire
 | `codeport.hover.enabled` | hover |
 | `codeport.codeLink.enabled` | path/line links |
 | `codeport.codeLink.resolveRelativeToMarkdownFile` | also resolve path links next to the note |
-| `codeport.codegraph.path` | where CodeGraph is installed (empty = auto-detect) |
 | `codeport.trace` | log level |
 
 ## Testing

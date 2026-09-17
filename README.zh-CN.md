@@ -103,7 +103,7 @@ cd <你的项目>
 codegraph index
 ```
 
-它会生成 `<项目>/.codegraph/codegraph.db`。CodePort 从被编辑的文件向上查找该目录，所以打开已索引项目的子目录也能用。`codegraph` 装在别处时，用 `codeport.codegraph.path` 指过去。
+它会生成 `<项目>/.codegraph/codegraph.db`。CodePort 从被编辑的文件向上查找该目录，所以打开已索引项目的子目录也能用。安装时 `codegraph` 会进入 `PATH`，CodePort 就是从那里加载 SDK 的——没有任何需要配置的东西。
 
 > **必须用官方 npm 源。** npmmirror 等镜像没有镜像 CodeGraph 的平台包，而 npm 会把「取不到的可选依赖」当成功 —— 结果是安装显示成功、一用就段错误。
 
@@ -170,8 +170,9 @@ Bring-up is described in `src/sched/init/nx_start.c:123`.
 
 | 设置 | 默认 | 说明 |
 | --- | --- | --- |
-| `codeport.codegraph.path` | `""` | CodeGraph 安装位置：包目录、`npm-sdk.js` 入口或 `codegraph` CLI。留空 = 自动探测（项目 `node_modules`，再到常见全局前缀）。 |
 | `codeport.trace` | `messages` | 输出通道日志级别（`off` 仍会报告警告与错误）。 |
+
+没有"CodeGraph 装在哪"的设置项：没有它这个插件就没用，所以约定 `codegraph` 在 `PATH` 上 —— 这正是 `npm i -g @colbymchenry/codegraph` 给你的东西。工作区可信时，项目自己的 `node_modules` 安装优先。
 
 其余关于索引的事 —— 索引哪些文件、哪些语言、忽略什么 —— 都是 CodeGraph 自己的配置（项目根的 `codegraph.json` 与 `.codegraph/`）。
 
@@ -228,7 +229,7 @@ Markdown  ──►  CodePort  ──►  CodeGraph（进程内：定位 SDK →
 ## 排错
 
 - **「no definition found」** —— 打开 **CodePort: Show Log**。按可能性排序：该目录没有 CodeGraph 索引（`codegraph index <目录>`）；这个名字是预处理宏，CodeGraph 不建模；名字确实不在图里。
-- **「CodeGraph was not found」** —— 没找到已安装的 SDK。安装它（`npm i -g @colbymchenry/codegraph`），或设置 `codeport.codegraph.path`。
+- **「CodeGraph was not found」** —— 没找到已安装的 SDK。装它（`npm i -g @colbymchenry/codegraph`）：全局安装会经 `PATH` 找到（含 nvm 各版本前缀），也没有别的设置项可以指路径。
 - **跳错了位置** —— 悬停看来源行写的依据。名字有歧义时，在笔记里写限定形式（`` `nx::start()` `` 而不是 `` `start()` ``）会提高正确候选的置信度。
 - **大改之后结果过期** —— 在该项目里跑 `codegraph sync`（或 `codegraph index`）。CodePort 只读图谱，从不写它。
 
