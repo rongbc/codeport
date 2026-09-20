@@ -1,6 +1,4 @@
-# Sources, tooling and tests are not shipped. `dist/` is not excluded, so the
-# built bundle is packaged as-is. There are no runtime assets any more: CodeGraph
-# ships and loads its own parsers.
+# Sources, tooling and tests are not shipped.
 src/**
 test/**
 scripts/**
@@ -12,9 +10,17 @@ tsconfig.json
 package-lock.json
 .gitignore
 
-# CodeGraph keeps its index in the workspace, not in the package, but a stale one
-# must never ship if someone builds from inside an indexed folder.
+# The built bundle is the only runtime artifact. Everything else under `dist/` is a
+# leftover: the retired local index vendored a tree-sitter WASM runtime into
+# `dist/wasm/`, and a build that no longer produces it must not ship a stale copy.
+dist/**
+!dist/extension.js
+
+# Indexes live in the workspace, never in the package: CodeGraph's `.codegraph/`, and
+# the retired CodePort index in `.codeport/`. A stale one must never ship if someone
+# builds from inside an indexed folder.
 .codegraph/**
+.codeport/**
 
 **/*.vsix
 **/*.log
