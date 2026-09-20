@@ -47,6 +47,7 @@ int main(void) {
 `;
 
 let workspace: string;
+let customRoot: string;
 let handle: ReturnType<typeof installVscodeStub>;
 let extension: { activate(context: unknown): unknown; deactivate(): Promise<void> };
 
@@ -60,6 +61,13 @@ before(() => {
   fs.writeFileSync(path.join(workspace, 'main.c'), MAIN);
   fs.mkdirSync(path.join(workspace, 'docs'), { recursive: true });
   fs.writeFileSync(path.join(workspace, 'docs', 'notes.md'), 'Call `nx_start()` to boot.\n');
+
+  // Bases for the path-link tests: one configured relative to the workspace root,
+  // one absolute and outside it entirely.
+  fs.mkdirSync(path.join(workspace, 'vendor'), { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'vendor', 'bundled.min.js'), '// bundled\n');
+  customRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codeport-extra-'));
+  fs.writeFileSync(path.join(customRoot, 'outside.log'), 'outside\n');
 
   // The graph lives *in the workspace*, and `filePath` is relative to it — as the
   // real CodeGraph reports it.
@@ -126,7 +134,10 @@ before(() => {
   handle = installVscodeStub({
     workspaceRoot: workspace,
     extensionPath: ROOT,
-    settings: { 'codeport.trace': 'verbose' },
+    settings: {
+      'codeport.trace': 'verbose',
+      'codeport.codeLink.searchPaths': ['vendor', customRoot],
+    },
   });
   extension = requireCjs(BUNDLE) as typeof extension;
   extension.activate({
@@ -144,6 +155,7 @@ after(async () => {
     handle?.restore();
     delete process.env.CODEGRAPH_SDK_PATH;
     fs.rmSync(workspace, { recursive: true, force: true });
+    fs.rmSync(customRoot, { recursive: true, force: true });
   }
 });
 
@@ -295,6 +307,58 @@ test('path links still work — they never touch the symbol engine', async () =>
   assert.ok(
     targets.includes(path.join(workspace, 'a.c')),
     `path links must keep working without the resolver; got ${JSON.stringify(targets)}`
+  );
+});
+
+function linkTargets(links: any[] | undefined): string[] {
+  return (links ?? []).filter((link: any) => link.target).map((link: any) => link.target.fsPath);
+}
+
+async function pathLinkTargets(text: string): Promise<string[]> {
+  const provider = handle.providers.get('documentLink');
+  return linkTargets(await provider.provideDocumentLinks(fakeDocument(text), token));
+}
+
+test('path links take any file type, and still refuse a target that does not exist', async () => {
+  fs.writeFileSync(path.join(workspace, 'data.json'), '{}\n');
+  fs.writeFileSync(path.join(workspace, 'notes.md'), '# notes\n');
+
+  const targets = await pathLinkTargets('See `data.json:3`, `notes.md` and `archive.tar.gz`.\n');
+
+  assert.ok(targets.includes(path.join(workspace, 'data.json')), `got ${JSON.stringify(targets)}`);
+  assert.ok(targets.includes(path.join(workspace, 'notes.md')), `got ${JSON.stringify(targets)}`);
+  assert.ok(
+    !targets.some((target) => target.endsWith('archive.tar.gz')),
+    'a mention of a missing file must not become a link'
+  );
+});
+
+test('a relative path resolves next to the note by default', async () => {
+  fs.writeFileSync(path.join(workspace, 'docs', 'local.cfg'), 'local\n');
+  fs.writeFileSync(path.join(workspace, 'docs', 'plain'), 'extensionless\n');
+
+  const targets = await pathLinkTargets('See `local.cfg` and `docs/plain`.\n');
+
+  assert.ok(
+    targets.includes(path.join(workspace, 'docs', 'local.cfg')),
+    `the note's own directory is a default base; got ${JSON.stringify(targets)}`
+  );
+  assert.ok(
+    targets.includes(path.join(workspace, 'docs', 'plain')),
+    `a directory-shaped mention needs no extension; got ${JSON.stringify(targets)}`
+  );
+});
+
+test('configured search paths are tried, workspace-relative and absolute', async () => {
+  const targets = await pathLinkTargets('See `bundled.min.js` and `outside.log`.\n');
+
+  assert.ok(
+    targets.includes(path.join(workspace, 'vendor', 'bundled.min.js')),
+    `a workspace-relative search path must be honoured; got ${JSON.stringify(targets)}`
+  );
+  assert.ok(
+    targets.includes(path.join(customRoot, 'outside.log')),
+    `an absolute search path must be honoured; got ${JSON.stringify(targets)}`
   );
 });
 

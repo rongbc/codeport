@@ -22,8 +22,7 @@ export interface CodePortConfig {
   readonly definitionEnabled: boolean;
   readonly referencesEnabled: boolean;
   readonly hoverEnabled: boolean;
-  readonly codeLinkEnabled: boolean;
-  readonly codeLinkRelativeToMarkdown: boolean;
+  readonly codeLinkSearchPaths: readonly string[];
   readonly trace: LogLevel;
 }
 
@@ -34,11 +33,17 @@ export function readConfig(): CodePortConfig {
     definitionEnabled: config.get<boolean>('definition.enabled', true),
     referencesEnabled: config.get<boolean>('references.enabled', true),
     hoverEnabled: config.get<boolean>('hover.enabled', true),
-    codeLinkEnabled: config.get<boolean>('codeLink.enabled', true),
-    codeLinkRelativeToMarkdown: config.get<boolean>(
-      'codeLink.resolveRelativeToMarkdownFile',
-      false
-    ),
+    codeLinkSearchPaths: readSearchPaths(config),
     trace: config.get<LogLevel>('trace', 'messages'),
   };
+}
+
+/** Additional path-link bases: strings only, trimmed, blanks dropped. */
+function readSearchPaths(config: vscode.WorkspaceConfiguration): readonly string[] {
+  const configured = config.get<unknown>('codeLink.searchPaths', []);
+  if (!Array.isArray(configured)) return [];
+  return configured
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }

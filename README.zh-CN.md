@@ -61,9 +61,13 @@ codegraph · exact name, language c, kind function
 ```
 `/home/user/project/src/main.c:42`  → 绝对路径：打开该文件第 42 行
 `src/main.c:42`                     → 相对工作区根解析
+`docs/diagram.svg`                  → 也相对笔记所在目录解析
+`pkg/api/schema.json`               → 任意文件类型，不只是源码
 ```
 
-也可以用 `codeport.codeLink.resolveRelativeToMarkdownFile` 让它同时相对当前 Markdown 文件解析。
+任何文件类型都能链接 —— 没有扩展名白名单；没有扩展名的文件只要写成路径形式（如 `src/Makefile`）也可以。只有目标真实存在时才生成链接，提到不存在的文件仍是普通文本。
+
+相对路径按以下顺序尝试：`codeport.codeLink.searchPaths`（每项是绝对路径或工作区根相对路径）→ 工作区根 → 笔记所在目录。绝对路径直接使用。路径链接没有开关项 —— `codeport.codeLink.searchPaths` 是它唯一的设置（`codeport.enabled` 是关掉整个扩展的总开关）。
 
 路径链接**完全不经过代码图谱** —— 装没装 CodeGraph 都能用。
 
@@ -163,8 +167,7 @@ Bring-up is described in `src/sched/init/nx_start.c:123`.
 | `codeport.definition.enabled` | `true` | Markdown 代码里的跳转定义。 |
 | `codeport.references.enabled` | `true` | 查找所有引用。 |
 | `codeport.hover.enabled` | `true` | 带签名与来源的 Hover。 |
-| `codeport.codeLink.enabled` | `true` | 可点击的 `path/file.c:42` 链接。 |
-| `codeport.codeLink.resolveRelativeToMarkdownFile` | `false` | 同时相对 Markdown 文件解析路径链接。 |
+| `codeport.codeLink.searchPaths` | `[]` | 相对路径链接的额外起始目录：绝对路径或工作区根相对路径。按顺序优先尝试。 |
 
 ### CodeGraph
 

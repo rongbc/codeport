@@ -2,7 +2,7 @@
   "name": "codeport",
   "displayName": "CodePort \u2014 Navigate Markdown to Source Code",
   "description": "Bring source-code navigation to Markdown. Resolve symbols in code blocks and inline code through a CodeGraph code graph, read in-process with no language server.",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "publisher": "RongBaichuan",
   "author": "rong baichuan",
   "license": "MIT",
@@ -137,15 +137,13 @@
           "default": true,
           "description": "Enable hover information (symbol kind, signature, definition site) inside Markdown code blocks and inline code."
         },
-        "codeport.codeLink.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Turn `path/to/file.c:42` inside inline code into a clickable link that opens the file at that line."
-        },
-        "codeport.codeLink.resolveRelativeToMarkdownFile": {
-          "type": "boolean",
-          "default": false,
-          "description": "Also resolve path links relative to the directory of the Markdown file itself (in addition to absolute paths and workspace-root-relative paths)."
+        "codeport.codeLink.searchPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra base directories for relative path links (which are always on, and always resolved against the workspace root and the Markdown file's own directory too). Each entry is an absolute path or a path relative to the workspace root; entries are tried in order."
         },
         "codeport.trace": {
           "type": "string",

@@ -267,8 +267,10 @@ Definition provider 的「找不到」提示会明确指出这一点。
 ## 路径 / 行号链接
 
 路径链接是从未碰过符号引擎的那一半，现在依然没有碰。`providers/DocumentLinkProvider.ts` 就是正则加
-`fs.statSync`；它对 `CodePort` 只有一次调用，取配置。它扫的是**整篇正文**而不只是代码片段，解析顺序为
-绝对路径 → 相对工作区根 →（可选）相对 Markdown 文件。
+`fs.statSync`；它对 `CodePort` 只有一次调用，取配置。它扫的是**整篇正文**而不只是代码片段。一个提及只要
+带任意扩展名、或含目录分隔符（`src/Makefile`）就算候选，解析顺序为绝对路径 → 配置的
+`codeport.codeLink.searchPaths`（每项为绝对路径或工作区根相对路径）→ 工作区根 → 笔记所在目录，取第一个
+真实存在的文件。链接只为存在的目标创建，所以猜错只花一次 `stat`，不会产生死链。
 
 这份独立性是刻意的，并且现在有测试保证：无论 CodeGraph 缺失、打不开还是健康，路径链接都必须照常工作。
 
@@ -283,8 +285,7 @@ Definition provider 的「找不到」提示会明确指出这一点。
 | `codeport.definition.enabled` | 跳转定义 |
 | `codeport.references.enabled` | 查找所有引用 |
 | `codeport.hover.enabled` | Hover |
-| `codeport.codeLink.enabled` | 路径 / 行号链接 |
-| `codeport.codeLink.resolveRelativeToMarkdownFile` | 同时相对笔记所在目录解析路径链接 |
+| `codeport.codeLink.searchPaths` | 路径链接的额外起始目录：绝对路径或工作区根相对路径 |
 | `codeport.trace` | 日志级别 |
 
 ## 测试
@@ -294,7 +295,7 @@ Definition provider 的「找不到」提示会明确指出这一点。
 | `test/markdown.test.ts` | 行内/围栏提取、关键字与路径/URL 跳过、CommonMark 反引号规则、光标命中 |
 | `test/codegraph.test.ts` | 两处坐标/路径换算、类型映射、container 拆分、图谱发现、SDK 定位与加载、单根缓存 |
 | `test/resolution.test.ts` | 每个排序信号与矛盾信号、类型/限定符一致性、合并排序、管线错误隔离与取消、resolver 对 fixture 图谱的端到端、构建收窄（CDB 定位/无答案回退/强压弱/与上限的先后）及其数据库的解析与缓存 |
-| `test/activation.test.ts` | **真实 esbuild bundle** 跑在桩化 VS Code API 与临时项目上：provider/命令注册、跳转定义、Hover 来源、Hover 源码回退、带精确调用点的引用、**路径链接** |
+| `test/activation.test.ts` | **真实 esbuild bundle** 跑在桩化 VS Code API 与临时项目上：provider/命令注册、跳转定义、Hover 来源、Hover 源码回退、带精确调用点的引用、**路径链接**（任意文件类型、笔记所在目录、配置的绝对/工作区相对起始路径） |
 | `test/degradation.test.ts` | 没有索引、索引打不开、宏无法索引，以及这三种状态下路径链接照常工作 |
 | `test/architecture.test.ts` | 被强制的不变量：`core/` 以下不 import `vscode`、不使用 TypeScript 参数属性、CodeGraph 永不被静态 import、贡献/注册/读取的设置保持一致 |
 

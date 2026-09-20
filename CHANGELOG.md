@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.5] - 2026-09-20
+
+### Changed
+
+- **Path links take any file type.** The extension whitelist (`.c`, `.h`, `.cc`, `.cpp`, `.cxx`, `.hpp`,
+  `.hh`, `.S`, `.asm`) is gone: a mention qualifies if it carries an extension of any kind, or if it is
+  written as a path (`src/Makefile`). Notes can now point at `schema.json`, `diagram.svg`, `README.md`, or an
+  extensionless makefile. Nothing else loosened — the link is still created only when `fs.statSync` finds the
+  target, so a wrong guess costs a `stat`, never a link to nowhere.
+- **A relative path resolves next to the note.** The order for a relative mention is
+  `codeport.codeLink.searchPaths` → workspace root → the Markdown file's own directory, first existing file
+  winning; the note's directory used to be opt-in and is now unconditional.
+
+### Added
+
+- **`codeport.codeLink.searchPaths`** — extra base directories for relative path links. Each entry is an
+  absolute path or a path relative to the workspace root, and entries are tried in order *before* the
+  workspace root and the note's own directory. This is how a note reaches a tree outside the workspace, or a
+  package inside a monorepo, without spelling out `../../..`.
+- `test/activation.test.ts` grew by three tests (any file type plus a missing target, note-relative and
+  extensionless path-shaped mentions, configured absolute/workspace-relative search paths); 99 tests pass.
+
+### Removed
+
+- `codeport.codeLink.enabled` and `codeport.codeLink.resolveRelativeToMarkdownFile`. Path links cannot be
+  broken by anything but CodePort's own absence (they are a regex plus `fs.statSync`), so one switch said
+  "links work" and the other said "look next to the note" — neither was a decision anyone makes twice.
+  `codeport.enabled` remains the single master switch, and `codeport.codeLink.searchPaths` the only path-link
+  knob. CodePort is pre-1.0, so no migration or deprecation period is owed; an existing `settings.json` entry
+  for either key is now an unknown setting.
+
 ## [0.2.4] - 2026-09-17
 
 ### Changed

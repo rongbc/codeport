@@ -292,8 +292,11 @@ with its own tree-sitter walker. The Definition provider's "not found" hint says
 
 Path links are the half of the extension that never touched the symbol engine, and they still do not.
 `providers/DocumentLinkProvider.ts` is a regex plus `fs.statSync`; it calls `CodePort` exactly once, for
-configuration. It scans the **whole document text**, not just code spans, and resolves targets as
-absolute → workspace-root-relative → (optionally) relative to the Markdown file.
+configuration. It scans the **whole document text**, not just code spans. A mention qualifies if it carries
+an extension of any kind or contains a directory separator (`src/Makefile`), and it resolves as absolute →
+configured `codeport.codeLink.searchPaths` (each absolute or workspace-root-relative) → workspace root → the
+Markdown file's own directory, first existing file winning. A link exists only where the target does, so a
+wrong guess costs a `stat` rather than a link to nowhere.
 
 That independence is deliberate and now enforced by tests: path links are asserted to keep working when
 CodeGraph is absent, unopenable, or healthy.
@@ -309,8 +312,7 @@ its configuration lives in the project's `codegraph.json` and `.codegraph/` dire
 | `codeport.definition.enabled` | go-to-definition |
 | `codeport.references.enabled` | Find All References |
 | `codeport.hover.enabled` | hover |
-| `codeport.codeLink.enabled` | path/line links |
-| `codeport.codeLink.resolveRelativeToMarkdownFile` | also resolve path links next to the note |
+| `codeport.codeLink.searchPaths` | extra path-link bases: absolute or workspace-root-relative |
 | `codeport.trace` | log level |
 
 ## Testing
@@ -320,7 +322,7 @@ its configuration lives in the project's `codegraph.json` and `.codegraph/` dire
 | `test/markdown.test.ts` | inline/fenced extraction, keyword and path/URL skipping, CommonMark backtick rules, cursor resolution |
 | `test/codegraph.test.ts` | the two coordinate/path conversions, kind mapping, container derivation, graph discovery, SDK lookup and loading, the per-root index cache |
 | `test/resolution.test.ts` | every ranking signal and contradiction, kinds/qualifier agreement, merge ordering, pipeline error isolation and cancellation, the resolver end to end over a fixture graph, build narrowing (CDB lookup, no-answer fallback, strong-over-weak, cap interaction) and its database finder/parse/cache |
-| `test/activation.test.ts` | **the real esbuild bundle** on a stubbed VS Code API and a temporary project: provider/command registration, definition, hover provenance, hover source fallback, references with exact call sites, **path links** |
+| `test/activation.test.ts` | **the real esbuild bundle** on a stubbed VS Code API and a temporary project: provider/command registration, definition, hover provenance, hover source fallback, references with exact call sites, **path links** (any file type, the note's own directory, configured absolute/workspace-relative search paths) |
 | `test/degradation.test.ts` | no index, an unopenable index, a macro that cannot be indexed, and path links in all three states |
 | `test/architecture.test.ts` | the enforced invariants: nothing below `core/` imports `vscode`, no TypeScript parameter properties, CodeGraph is never statically imported, contributed/registered/read settings stay consistent |
 

@@ -62,9 +62,13 @@ source instead.
 ```
 `/home/user/project/src/main.c:42`  → absolute path: opens the file at line 42
 `src/main.c:42`                     → resolved against the workspace root
+`docs/diagram.svg`                  → and against the note's own directory
+`pkg/api/schema.json`               → any file type, not just source code
 ```
 
-Optionally also resolved relative to the Markdown file itself (`codeport.codeLink.resolveRelativeToMarkdownFile`).
+Any file type is linkable — there is no extension whitelist — and a mention without an extension works as long as it is written as a path (`src/Makefile`). A link is created only when the target exists; a mention of a missing file stays plain text.
+
+Relative mentions are tried in order: `codeport.codeLink.searchPaths` (each entry an absolute path or a workspace-root-relative one), then the workspace root, then the directory holding the Markdown file. Absolute paths are used as-is. There is no on/off setting for path links — `codeport.codeLink.searchPaths` is the only one they have (`codeport.enabled` turns the whole extension off).
 
 Path links do not touch the code graph at all — they keep working whether or not CodeGraph is installed.
 
@@ -164,8 +168,7 @@ With the cursor on `` `nx_start()` `` or on `nxsched_add_readytorun`, **F12** op
 | `codeport.definition.enabled` | `true` | Go-to-definition in Markdown code. |
 | `codeport.references.enabled` | `true` | Find All References. |
 | `codeport.hover.enabled` | `true` | Hover with signature and provenance. |
-| `codeport.codeLink.enabled` | `true` | Clickable `path/file.c:42` links. |
-| `codeport.codeLink.resolveRelativeToMarkdownFile` | `false` | Also resolve path links relative to the Markdown file. |
+| `codeport.codeLink.searchPaths` | `[]` | Extra bases for relative path links: absolute, or relative to the workspace root. Tried first, in order. |
 
 ### CodeGraph
 
